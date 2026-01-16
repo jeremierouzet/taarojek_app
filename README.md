@@ -346,6 +346,44 @@ taarojek_app/
 - Handles NSO connection timeout gracefully
 - Parameters: HOST PORT USERNAME PASSWORD ENDPOINT METHOD DATA
 
+## Recent Updates
+
+### Version 2.0 - Cross-Platform Support (January 16, 2026)
+
+**Major Enhancements:**
+
+1. **Smart SSH Tunnel Management**
+   - ✅ Automatic detection of existing tunnels on the same port
+   - ✅ Auto-kill stale tunnels before creating new ones (no manual cleanup!)
+   - ✅ Cross-platform process management using `psutil`
+   - ✅ Robust PID tracking across Windows, macOS, and Linux
+
+2. **Full Cross-Platform Compatibility**
+   - ✅ Windows support (Git Bash/WSL)
+   - ✅ macOS native support
+   - ✅ Linux native support
+   - ✅ Platform-specific virtual environment activation
+   - ✅ Unified process and port management
+
+3. **Enhanced Shell Scripts**
+   - `setup.sh` - OS detection and platform-specific setup
+   - `run.sh` - Cross-platform execution and venv activation
+   - `stop.sh` - Platform-aware process termination
+
+4. **Improved User Experience**
+   - No need to manually kill existing tunnels
+   - Click "Connect" - app handles everything automatically
+   - Consistent behavior across all operating systems
+   - Better error handling and recovery
+
+**Technical Details:**
+- Added `psutil>=5.9.0` for cross-platform process management
+- Replaced Unix-specific commands (`lsof`, `pgrep`) with cross-platform equivalents
+- Implemented graceful process termination (terminate → wait → kill if needed)
+- Enhanced documentation with platform-specific troubleshooting
+
+**Migration:** No action required - fully backward compatible!
+
 ## Deployment Checklist
 
 ### First Time Setup
