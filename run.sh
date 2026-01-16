@@ -37,8 +37,19 @@ fi
 
 echo "Starting Swisscom NSO Manager on port 50478..."
 echo "Access at: http://localhost:50478"
-echo "Press Ctrl+C to stop"
 echo ""
 
-# Start the server
-python manage.py runserver 50478
+# Create logs directory if it doesn't exist
+mkdir -p logs
+
+# Start the server in background
+nohup python manage.py runserver 50478 > logs/nso-manager.log 2>&1 &
+PID=$!
+
+# Save PID to file
+echo $PID > logs/nso-manager.pid
+
+echo "✓ Application started in background (PID: $PID)"
+echo "Logs: tail -f logs/nso-manager.log"
+echo "Stop: kill \$(cat logs/nso-manager.pid)"
+echo ""

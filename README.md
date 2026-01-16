@@ -38,6 +38,12 @@ cd taarojek_app
 
 # 3. Start the application
 ./run.sh
+
+# 4. View logs (optional)
+tail -f logs/nso-manager.log
+
+# 5. Stop the application
+./stop.sh
 ```
 
 **Access:** http://localhost:50478
@@ -139,12 +145,14 @@ sudo journalctl -u nso-manager -f   # View logs
 
 ### Starting the Application
 
-**Development Mode:**
+**Development Mode (Background):**
 ```bash
-./run.sh
+./run.sh                      # Starts in background
+tail -f logs/nso-manager.log  # View logs
+./stop.sh                     # Stop application
 ```
 
-Or manually:
+**Development Mode (Foreground):**
 ```bash
 source venv/bin/activate
 python manage.py runserver 50478
