@@ -78,7 +78,7 @@ NSO_INSTANCES = {
         'port': 8888,
         'local_port': 8892,  # Unique local port for tunnel
         'ssh_host': 'jump01',  # Production uses jump01 instead of devm
-        'use_tunnel': USE_TUNNELS,  # Auto-detect based on hostname
+        'use_tunnel': True,  # Always use tunnel via jump01 (even from devm)
         'use_https': False,  # This server uses HTTP, not HTTPS
         'description': 'Titan production environment - use with caution',
         'color': '#F44336',  # Red
