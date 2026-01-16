@@ -5,6 +5,7 @@ Django web application for managing NSO instances and checking device synchroniz
 ## Table of Contents
 
 - [Features](#features)
+- [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [NSO Instance Configuration](#nso-instance-configuration)
 - [Installation](#installation)
@@ -29,6 +30,94 @@ Django web application for managing NSO instances and checking device synchroniz
 - **Service Mode**: Can run as a systemd service for production deployment (Linux)
 - **Background Execution**: Runs with nohup for persistent operation
 - **Cross-Platform Scripts**: Shell scripts work on macOS, Linux, and Windows (Git Bash/WSL)
+
+## Prerequisites
+
+### System Requirements
+
+- **Python**: 3.9 or higher
+- **Operating System**: macOS, Linux, or Windows (Git Bash/WSL)
+- **SSH Client**: OpenSSH for tunnel management
+
+### Required Environment Variables
+
+The application uses environment variables for NSO authentication credentials. Set these before running the application:
+
+```bash
+# Integration environments (Dune & Titan Integration)
+export NSO_USER_INT="your_username"
+export NSO_PASS_INT="your_password"
+
+# End-to-End environments (Dune & Titan E2E)
+export NSO_USER_E2E="your_username"
+export NSO_PASS_E2E="your_password"
+
+# Production environment (Titan Production)
+export NSO_USER_PROD="your_username"
+export NSO_PASS_PROD="your_password"
+```
+
+**Default Values**: If not set, all credentials default to `admin/admin` (which may not work for all environments).
+
+### SSH Configuration
+
+#### From Local Machine (Windows/macOS/Linux)
+
+You need SSH access configured for:
+
+1. **For Dev/Test/E2E instances**: SSH access to `devm` (jump host)
+   ```bash
+   # Test connectivity
+   ssh devm
+   ```
+
+2. **For Production instance**: SSH access to `jump01` on port 443 with MFA
+   ```bash
+   # Add to ~/.ssh/config
+   Host jump01
+       HostName opal-jump01.noctools.swissptt.ch
+       Port 443
+       User your_username
+       ControlMaster auto
+       ControlPath ~/.ssh/cm-%r@%h:%p
+       ControlPersist 10m
+   
+   # Establish master connection (will prompt for MFA token)
+   ssh -fN jump01
+   ```
+
+#### From dev-vm Server
+
+- No SSH configuration needed (direct access to NSO instances)
+- **Exception**: Titan Production requires jump01 which is not accessible from dev-vm
+  - Use your local machine to access Titan Production
+
+### Network Access
+
+The application requires network connectivity to NSO instances:
+
+| Running From | Instances Accessible | Connection Method |
+|--------------|---------------------|-------------------|
+| **Local Machine** | All 5 instances | SSH tunnels (via devm or jump01) |
+| **dev-vm** | 4 instances (all except Titan Production) | Direct TCP/IP access |
+
+### Python Dependencies
+
+Automatically installed by `setup.sh`, but for reference:
+
+```
+Django==4.2.27
+psutil>=5.9.0  # Cross-platform process management
+```
+
+### Optional: Django Admin Account
+
+For accessing Django admin interface (`/admin/`):
+
+```bash
+# Create superuser (one-time setup)
+python manage.py createsuperuser
+```
 
 ## Quick Start
 
