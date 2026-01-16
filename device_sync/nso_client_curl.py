@@ -115,7 +115,25 @@ class NSOClientCurl:
                     'success': True,
                     'message': 'Successfully connected to NSO'
                 }
+            # Check for error responses
+            elif '<errors' in data or '<error>' in data:
+                logger.error(f"NSO returned error: {data[:500]}")
+                # Extract error message from XML if possible
+                import re
+                error_msg_match = re.search(
+                    r'<error-message>([^<]+)</error-message>', 
+                    data
+                )
+                if error_msg_match:
+                    error_msg = error_msg_match.group(1)
+                else:
+                    error_msg = data[:200]
+                return {
+                    'success': False,
+                    'message': f'NSO API error: {error_msg}'
+                }
             else:
+                logger.warning(f"Unexpected response format: {data[:200]}")
                 return {
                     'success': False,
                     'message': f'Unexpected response: {data[:100]}'
@@ -148,12 +166,56 @@ class NSOClientCurl:
         # Parse XML response - extract device names
         # Look for <device><name>xxx</name> pattern
         import re
-        # Match device blocks and extract names
-        device_pattern = r'<device>\s*<name>([^<]+)</name>'
-        device_names = re.findall(device_pattern, data)
         
-        for name in device_names:
-            devices.append({'name': name})
+        # More flexible regex pattern to handle various XML formatting
+        # Matches <name>xxx</name> within device blocks
+        device_pattern = r'<name>([^<]+)</name>'
+        all_names = re.findall(device_pattern, data)
+        
+        # The response contains many <name> tags (for various elements)
+        # We need to identify which are device names
+        # In NSO XML structure, device names appear in specific context
+        
+        # Better approach: look for the device list structure
+        # Extract the devices section and then parse names
+        devices_section_match = re.search(
+            r'<devices[^>]*>(.*?)</devices>',
+            data,
+            re.DOTALL
+        )
+        
+        if devices_section_match:
+            devices_section = devices_section_match.group(1)
+            # Now find all <device> blocks
+            device_blocks = re.findall(
+                r'<device>(.*?)</device>',
+                devices_section,
+                re.DOTALL
+            )
+            
+            logger.info(f"Found {len(device_blocks)} device blocks")
+            
+            for block in device_blocks:
+                # Extract name from each device block
+                name_match = re.search(r'<name>([^<]+)</name>', block)
+                if name_match:
+                    device_name = name_match.group(1)
+                    devices.append({'name': device_name})
+        else:
+            # Fallback to original method
+            logger.warning("Could not find devices section, using fallback method")
+            device_pattern = r'<device>\s*<name>([^<]+)</name>'
+            device_names = re.findall(device_pattern, data)
+            for name in device_names:
+                devices.append({'name': name})
+        
+        logger.info(f"Raw response length: {len(data)} bytes")
+        logger.info(f"Found {len(devices)} devices in NSO response")
+        
+        # Log first few devices for debugging
+        if devices:
+            device_names = [d['name'] for d in devices]
+            logger.info(f"First few devices: {device_names[:5]}")
         
         return {
             'success': True,

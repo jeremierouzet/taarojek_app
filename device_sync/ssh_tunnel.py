@@ -71,94 +71,88 @@ class SSHTunnelManager:
         tunnel_spec = f"{local_port}:{nso_ip}:{nso_port}"
         
         # Platform-specific SSH command
+        # Note: Removed -f flag, using Popen to background process instead
         if self.os_type == 'Windows':
             # Windows: use ssh.exe (available in Windows 10+)
-            cmd = ['ssh', '-L', tunnel_spec, '-N', '-f', ssh_host]
+            cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                   '-o', 'ServerAliveInterval=60',
+                   '-L', tunnel_spec, '-N', ssh_host]
         else:
             # Unix-like (macOS, Linux)
-            cmd = ['ssh', '-L', tunnel_spec, '-N', '-f', ssh_host]
+            cmd = ['ssh', '-o', 'StrictHostKeyChecking=no',
+                   '-o', 'ServerAliveInterval=60', 
+                   '-L', tunnel_spec, '-N', ssh_host]
+        
+        logger.info(f"Creating SSH tunnel: {' '.join(cmd)}")
         
         try:
-            # Execute the SSH command
-            # Use longer timeout for remote connections (jump host scenario)
-            result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
-                timeout=30
+            # Execute the SSH command in background using Popen
+            logger.info("Starting SSH tunnel process in background...")
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True  # Detach from parent process
             )
             
-            if result.returncode != 0:
-                logger.error(f"Failed to create tunnel: {result.stderr}")
-                return {
-                    'success': False,
-                    'message': f'Failed to create tunnel: {result.stderr}'
-                }
+            pid = process.pid
+            logger.info(f"SSH process started with PID: {pid}")
             
-            # Give the tunnel more time to establish (especially for jump host)
-            time.sleep(3)
+            # Give the tunnel time to establish - retry multiple times
+            logger.info("Waiting for tunnel to establish...")
+            max_attempts = 10
+            port_ready = False
             
-            # Find the PID of the tunnel with retries
-            max_retries = 5
-            pid = None
-            for attempt in range(max_retries):
-                pid = self._find_tunnel_pid(local_port, nso_ip, nso_port)
-                if pid:
-                    break
-                # Wait a bit longer for tunnel to fully establish
-                logger.debug(
-                    f"Attempt {attempt + 1}/{max_retries}: "
-                    f"Waiting for tunnel to establish..."
-                )
-                time.sleep(2)
-            
-            if pid:
-                self.active_tunnels[instance_name] = {'pid': pid, 'local_port': local_port}
-                logger.info(f"Created tunnel to {instance_name} on port {local_port}, PID: {pid}")
-                return {
-                    'success': True,
-                    'message': f'Tunnel created on port {local_port}',
-                    'pid': pid,
-                    'local_port': local_port,
-                    'url': f'https://localhost:{local_port}'
-                }
-            else:
-                # Tunnel might be running but hard to find PID, check if port is in use
+            for attempt in range(max_attempts):
+                time.sleep(1)
                 if self._is_port_in_use(local_port):
-                    logger.warning(f"Tunnel appears to be running on port {local_port} but PID not found")
-                    # Try one more time to find PID
-                    time.sleep(1)
-                    pid = self._find_tunnel_pid_by_port(local_port)
-                    if pid:
-                        self.active_tunnels[instance_name] = {'pid': pid, 'local_port': local_port}
-                        return {
-                            'success': True,
-                            'message': f'Tunnel created on port {local_port}',
-                            'pid': pid,
-                            'local_port': local_port,
-                            'url': f'https://localhost:{local_port}'
-                        }
-                    else:
-                        # Port is in use, assume tunnel is working even without PID
-                        self.active_tunnels[instance_name] = {'pid': -1, 'local_port': local_port}
-                        return {
-                            'success': True,
-                            'message': f'Tunnel created on port {local_port} (PID tracking unavailable)',
-                            'pid': -1,
-                            'local_port': local_port,
-                            'url': f'https://localhost:{local_port}'
-                        }
+                    port_ready = True
+                    logger.info(
+                        f"Port {local_port} is now in use "
+                        f"(attempt {attempt + 1}/{max_attempts})"
+                    )
+                    break
+                logger.info(
+                    f"Attempt {attempt + 1}/{max_attempts}: "
+                    f"Port {local_port} not ready yet..."
+                )
+            
+            # Verify the tunnel is working by checking if port is in use
+            if not port_ready:
+                logger.error(
+                    f"Port {local_port} not in use after {max_attempts} seconds"
+                )
+                # Kill the process if it's still running
+                try:
+                    if process.poll() is None:  # Process still running
+                        process.terminate()
+                        logger.info(f"Terminated SSH process {pid}")
+                except Exception as e:
+                    logger.warning(f"Error terminating process: {e}")
                 
                 return {
                     'success': False,
-                    'message': 'Tunnel process not found after creation'
+                    'message': (
+                        'Tunnel failed to bind to local port. '
+                        'Check SSH configuration and network connectivity.'
+                    )
                 }
-                
-        except subprocess.TimeoutExpired:
-            return {
-                'success': False,
-                'message': 'SSH tunnel creation timed out'
+            
+            logger.info(f"Tunnel successfully established on port {local_port}")
+            self.active_tunnels[instance_name] = {
+                'pid': pid, 
+                'local_port': local_port
             }
+            
+            return {
+                'success': True,
+                'message': f'Tunnel created on port {local_port}',
+                'pid': pid,
+                'local_port': local_port,
+                'url': f'https://localhost:{local_port}'
+            }
+                
         except Exception as e:
             logger.exception(f"Error creating tunnel: {e}")
             return {
@@ -298,13 +292,39 @@ class SSHTunnelManager:
     def _is_port_in_use(self, port):
         """Check if a port is in use - Cross-platform"""
         try:
-            for conn in psutil.net_connections(kind='inet'):
-                if conn.laddr.port == port:
-                    return True
+            connections = psutil.net_connections(kind='inet')
+            for conn in connections:
+                try:
+                    if conn.laddr.port == port:
+                        return True
+                except (AttributeError, IndexError):
+                    continue
             return False
+        except psutil.AccessDenied:
+            # Fallback: try to bind to the port
+            logger.warning(
+                f"Access denied checking connections, "
+                f"using socket bind test for port {port}"
+            )
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                sock.bind(('localhost', port))
+                sock.close()
+                return False  # Port is free (we could bind)
+            except OSError:
+                return True  # Port in use (bind failed)
         except Exception as e:
             logger.error(f"Error checking port {port}: {e}")
-            return False
+            # Fallback method using socket
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                sock.bind(('localhost', port))
+                sock.close()
+                return False
+            except OSError:
+                return True
     
     def _kill_process(self, pid):
         """Kill a process - Cross-platform"""

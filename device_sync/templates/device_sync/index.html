@@ -99,7 +99,7 @@
                 <button class="btn btn-danger btn-full" onclick="disconnectInstance('{{ key }}')">
                     Disconnect
                 </button>
-                <a href="{% url 'device_sync:sync_view' key %}" class="btn btn-primary btn-full">
+                <a href="{% url 'device_sync:sync_view' key %}" target="_blank" class="btn btn-primary btn-full">
                     Check Devices
                 </a>
                 {% else %}
