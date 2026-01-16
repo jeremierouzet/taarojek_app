@@ -21,6 +21,70 @@ class SSHTunnelManager:
         self.active_tunnels = {}  # instance_name -> {'pid': int, 'local_port': int}
         self.os_type = platform.system()  # 'Windows', 'Linux', 'Darwin' (macOS)
     
+    def test_remote_reachability(self, nso_ip, nso_port, ssh_host='devm', timeout=3):
+        """
+        Test if a remote NSO server is reachable from the SSH jump host.
+        
+        Args:
+            nso_ip (str): IP address of the NSO server
+            nso_port (int): Port of the NSO server
+            ssh_host (str): SSH host to test from (default: 'devm')
+            timeout (int): Timeout in seconds (default: 3)
+            
+        Returns:
+            dict: {'reachable': bool, 'message': str}
+        """
+        logger.info(f"Testing reachability of {nso_ip}:{nso_port} from {ssh_host}...")
+        
+        # Use nc (netcat) to test connectivity via SSH
+        cmd = ['ssh', ssh_host, f'nc -zv -w{timeout} {nso_ip} {nso_port} 2>&1']
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout + 2
+            )
+            
+            # nc returns 0 if connection successful
+            if result.returncode == 0:
+                logger.info(f"Server {nso_ip}:{nso_port} is reachable from {ssh_host}")
+                return {
+                    'reachable': True,
+                    'message': f'Server {nso_ip}:{nso_port} is reachable'
+                }
+            else:
+                # Parse error message
+                output = result.stdout + result.stderr
+                if 'refused' in output.lower():
+                    msg = f"Server {nso_ip}:{nso_port} is refusing connections (server may be down or port closed)"
+                elif 'timeout' in output.lower() or 'timed out' in output.lower():
+                    msg = f"Connection to {nso_ip}:{nso_port} timed out (server unreachable or firewalled)"
+                else:
+                    msg = f"Cannot reach {nso_ip}:{nso_port} from {ssh_host}: {output[:100]}"
+                
+                logger.warning(msg)
+                return {
+                    'reachable': False,
+                    'message': msg
+                }
+                
+        except subprocess.TimeoutExpired:
+            msg = f"Timeout testing connectivity to {nso_ip}:{nso_port} from {ssh_host}"
+            logger.error(msg)
+            return {
+                'reachable': False,
+                'message': msg
+            }
+        except Exception as e:
+            msg = f"Error testing reachability: {str(e)}"
+            logger.exception(msg)
+            return {
+                'reachable': False,
+                'message': msg
+            }
+    
     def create_tunnel(self, instance_name, nso_ip, nso_port, local_port=8888, ssh_host='devm'):
         """
         Create an SSH tunnel to an NSO instance.
@@ -72,14 +136,20 @@ class SSHTunnelManager:
         
         # Platform-specific SSH command
         # Note: Removed -f flag, using Popen to background process instead
+        # Special handling for jump01: uses port 443 instead of 22
+        if ssh_host == 'jump01':
+            ssh_port = '443'
+        else:
+            ssh_port = '22'
+        
         if self.os_type == 'Windows':
             # Windows: use ssh.exe (available in Windows 10+)
-            cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+            cmd = ['ssh', '-p', ssh_port, '-o', 'StrictHostKeyChecking=no', 
                    '-o', 'ServerAliveInterval=60',
                    '-L', tunnel_spec, '-N', ssh_host]
         else:
             # Unix-like (macOS, Linux)
-            cmd = ['ssh', '-o', 'StrictHostKeyChecking=no',
+            cmd = ['ssh', '-p', ssh_port, '-o', 'StrictHostKeyChecking=no',
                    '-o', 'ServerAliveInterval=60', 
                    '-L', tunnel_spec, '-N', ssh_host]
         

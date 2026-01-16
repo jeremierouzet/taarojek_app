@@ -114,6 +114,7 @@ def check_sync(request, instance_name):
     # Get NSO credentials from instance configuration (which reads from environment)
     nso_user = instance.get('username')
     nso_pass = instance.get('password')
+    use_https = instance.get('use_https', True)  # Default to HTTPS
     
     if not nso_user or not nso_pass:
         return JsonResponse({
@@ -126,7 +127,8 @@ def check_sync(request, instance_name):
         host=nso_host,
         port=nso_port,
         username=nso_user,
-        password=nso_pass
+        password=nso_pass,
+        use_https=use_https
     )
     
     # Test connection first

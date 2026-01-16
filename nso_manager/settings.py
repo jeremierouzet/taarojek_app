@@ -152,7 +152,7 @@ LOGGING = {
     'loggers': {
         'device_sync': {
             'handlers': ['console', 'file'],
-            'level': 'INFO',
+            'level': 'DEBUG',
             'propagate': False,
         },
     },
