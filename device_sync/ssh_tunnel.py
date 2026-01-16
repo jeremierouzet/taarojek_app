@@ -80,7 +80,13 @@ class SSHTunnelManager:
         
         try:
             # Execute the SSH command
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            # Use longer timeout for remote connections (jump host scenario)
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                timeout=30
+            )
             
             if result.returncode != 0:
                 logger.error(f"Failed to create tunnel: {result.stderr}")
@@ -89,11 +95,22 @@ class SSHTunnelManager:
                     'message': f'Failed to create tunnel: {result.stderr}'
                 }
             
-            # Give the tunnel a moment to establish
-            time.sleep(2)
+            # Give the tunnel more time to establish (especially for jump host)
+            time.sleep(3)
             
-            # Find the PID of the tunnel
-            pid = self._find_tunnel_pid(local_port, nso_ip, nso_port)
+            # Find the PID of the tunnel with retries
+            max_retries = 5
+            pid = None
+            for attempt in range(max_retries):
+                pid = self._find_tunnel_pid(local_port, nso_ip, nso_port)
+                if pid:
+                    break
+                # Wait a bit longer for tunnel to fully establish
+                logger.debug(
+                    f"Attempt {attempt + 1}/{max_retries}: "
+                    f"Waiting for tunnel to establish..."
+                )
+                time.sleep(2)
             
             if pid:
                 self.active_tunnels[instance_name] = {'pid': pid, 'local_port': local_port}
