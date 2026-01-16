@@ -6,12 +6,31 @@ Handles connections to NSO and device sync checking.
 
 import requests
 import logging
+import ssl
+from requests.adapters import HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context
 from urllib3.exceptions import InsecureRequestWarning
 
 # Suppress SSL warnings for NSO connections
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
+
+
+class LegacyTLSAdapter(HTTPAdapter):
+    """
+    Custom adapter to handle legacy TLS/SSL configurations.
+    NSO may use older SSL versions or cipher suites.
+    """
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = create_urllib3_context()
+        ctx.set_ciphers('DEFAULT@SECLEVEL=1')
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        # Support older TLS versions
+        ctx.minimum_version = ssl.TLSVersion.TLSv1
+        kwargs['ssl_context'] = ctx
+        return super().init_poolmanager(*args, **kwargs)
 
 
 class NSOClient:
@@ -32,6 +51,16 @@ class NSOClient:
         self.password = password
         self.session = requests.Session()
         self.session.verify = False  # Disable SSL verification
+        
+        # Mount custom TLS adapter for legacy SSL support
+        self.session.mount('https://', LegacyTLSAdapter())
+        
+        # Disable proxy for direct NSO connections (already in no_proxy)
+        self.session.proxies = {
+            'http': None,
+            'https': None,
+        }
+        
         if username and password:
             self.session.auth = (username, password)
     
@@ -45,7 +74,7 @@ class NSOClient:
         try:
             response = self.session.get(
                 f"{self.base_url}/restconf/data/tailf-ncs:devices",
-                timeout=5
+                timeout=10  # Increased timeout for slower connections
             )
             
             if response.status_code == 200:
