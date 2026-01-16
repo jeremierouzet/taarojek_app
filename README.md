@@ -19,18 +19,22 @@ Django web application for managing NSO instances and checking device synchroniz
 - **Multi-Instance Support**: Connect to 5 different NSO environments (Dune and Titan: Integration, E2E, Production)
 - **Simultaneous Connections**: Connect to multiple NSO instances at the same time with unique local ports
 - **SSH Tunnel Management**: Automatically creates SSH tunnels to NSO instances through jump host (disabled on dev-vm)
+  - **Smart Tunnel Detection**: Automatically detects and kills existing tunnels before reconnecting
+  - **Cross-Platform**: Works on Windows, macOS, and Linux
 - **Direct Access Mode**: Detects when running on dev-vm and connects directly to NSO without tunnels
 - **Device Sync Checking**: Check if all devices are synchronized with NSO using RESTCONF API
 - **Robust NSO Client**: Curl-based client handles NSO connection behavior and SSL/TLS issues
 - **Swisscom Branding**: Custom UI with Swisscom corporate design
 - **Authentication**: Secure login system with username/password
-- **Service Mode**: Can run as a systemd service for production deployment
+- **Service Mode**: Can run as a systemd service for production deployment (Linux)
 - **Background Execution**: Runs with nohup for persistent operation
+- **Cross-Platform Scripts**: Shell scripts work on macOS, Linux, and Windows (Git Bash/WSL)
 
 ## Quick Start
 
 ### After Git Clone
 
+**On macOS/Linux:**
 ```bash
 # 1. Clone the repository
 git clone https://github.com/jeremierouzet/taarojek_app.git
@@ -47,6 +51,25 @@ tail -f logs/nso-manager.log
 
 # 5. Stop the application
 ./stop.sh
+```
+
+**On Windows (Git Bash or WSL):**
+```bash
+# 1. Clone the repository
+git clone https://github.com/jeremierouzet/taarojek_app.git
+cd taarojek_app
+
+# 2. Run setup (one-time)
+bash setup.sh
+
+# 3. Start the application
+bash run.sh
+
+# 4. View logs (optional)
+tail -f logs/nso-manager.log
+
+# 5. Stop the application
+bash stop.sh
 ```
 
 **Access:** http://localhost:50478
@@ -78,11 +101,26 @@ tail -f logs/nso-manager.log
 
 ### Prerequisites
 
-- Python 3.9+
-- SSH access to devm (with ProxyJump configuration in `~/.ssh/config`)
-- NSO credentials in environment variables (optional for development):
-  - `NSO_USER_INT`
-  - `NSO_PASS_INT`
+- **Python 3.9+** (works on all platforms)
+- **SSH Client**:
+  - macOS/Linux: Built-in OpenSSH
+  - Windows: OpenSSH Client (install via Settings > Apps > Optional Features)
+- **SSH access to devm** (with ProxyJump configuration in `~/.ssh/config`)
+- **NSO credentials** in environment variables (optional for development):
+  - `NSO_USER_INT` / `NSO_PASS_INT` (for integration)
+  - `NSO_USER_E2E` / `NSO_PASS_E2E` (for E2E)
+  - `NSO_USER_PROD` / `NSO_PASS_PROD` (for production)
+
+### Platform-Specific Notes
+
+**Windows:**
+- Use Git Bash or WSL (Windows Subsystem for Linux) to run shell scripts
+- Ensure OpenSSH Client is installed
+- Virtual environment activation: `source venv/Scripts/activate`
+
+**macOS/Linux:**
+- Native shell support
+- Virtual environment activation: `source venv/bin/activate`
 
 ### Method 1: Quick Setup (Recommended)
 
@@ -96,9 +134,21 @@ After cloning the repository, simply run:
 ### Method 2: Manual Installation
 
 1. **Create and activate virtual environment:**
+   
+   **macOS/Linux:**
    ```bash
    python3 -m venv venv
    source venv/bin/activate
+   ```
+   
+   **Windows (Git Bash/PowerShell):**
+   ```bash
+   python -m venv venv
+   source venv/Scripts/activate  # Git Bash
+   # OR
+   venv\Scripts\activate.bat     # Command Prompt
+   # OR
+   venv\Scripts\Activate.ps1     # PowerShell
    ```
 
 2. **Install dependencies:**
@@ -156,8 +206,16 @@ tail -f logs/nso-manager.log  # View logs
 ```
 
 **Development Mode (Foreground):**
+
+*macOS/Linux:*
 ```bash
 source venv/bin/activate
+python manage.py runserver 50478
+```
+
+*Windows (Git Bash):*
+```bash
+source venv/Scripts/activate
 python manage.py runserver 50478
 ```
 
@@ -191,19 +249,47 @@ sudo systemctl start nso-manager
 
 ### Checking Active Tunnels
 
-View all active tunnels:
+**macOS/Linux:**
 ```bash
+# View all active tunnels
 ps aux | grep "ssh -L"
-```
 
-Check specific ports:
-```bash
+# Check specific ports using lsof
 lsof -i :8888  # Dune Integration
 lsof -i :8889  # Titan Integration
 lsof -i :8890  # Dune E2E
 lsof -i :8891  # Titan E2E
 lsof -i :8892  # Titan Production
 ```
+
+**Windows:**
+```bash
+# View all SSH processes
+tasklist | findstr ssh
+
+# Check specific ports using netstat
+netstat -ano | findstr :8888  # Dune Integration
+netstat -ano | findstr :8889  # Titan Integration
+netstat -ano | findstr :8890  # Dune E2E
+netstat -ano | findstr :8891  # Titan E2E
+netstat -ano | findstr :8892  # Titan Production
+```
+
+### Smart Tunnel Management
+
+The application now features **intelligent tunnel management**:
+
+- **Automatic Detection**: Detects if a tunnel is already running on the required port
+- **Auto-Kill**: Automatically kills any existing tunnel on the port before creating a new one
+- **Cross-Platform**: Works consistently across Windows, macOS, and Linux
+- **No Manual Cleanup**: No need to manually kill tunnels before reconnecting
+- **Process Tracking**: Uses `psutil` library for reliable cross-platform process management
+
+**How it works:**
+1. When you click "Connect", the app checks if the port is in use
+2. If an old tunnel exists, it's automatically terminated
+3. A new tunnel is created and tracked
+4. The app monitors tunnel health and recreates if needed
 
 ## Project Structure
 
@@ -230,10 +316,16 @@ taarojek_app/
 ### Key Components
 
 **SSH Tunnel Manager** (`device_sync/ssh_tunnel.py`)
+- **Cross-platform support**: Works on Windows, macOS, and Linux
+- **Smart tunnel management**: 
+  - Automatically detects existing tunnels on the same port
+  - Kills stale tunnels before creating new ones
+  - Tracks tunnel processes reliably using `psutil`
 - Creates SSH tunnels: `ssh -L LOCAL_PORT:NSO_IP:8888 -N -f devm`
 - Each instance uses unique local port (8888-8892)
 - Supports multiple simultaneous connections
 - Manages tunnel lifecycle (create, check, close)
+- Platform-specific process management (handles PID differences between OSes)
 
 **NSO Client** (`device_sync/nso_client.py`)
 - REST API integration with NSO
@@ -350,8 +442,44 @@ python manage.py createsuperuser
 
 ## Troubleshooting
 
+### Cross-Platform Issues
+
+**Windows: SSH not found**
+```bash
+# Install OpenSSH Client
+# Go to: Settings > Apps > Optional Features > Add a feature
+# Search for "OpenSSH Client" and install
+
+# Verify installation
+ssh -V
+```
+
+**Windows: Scripts won't run**
+```bash
+# Use Git Bash or WSL
+bash setup.sh
+bash run.sh
+
+# Or use WSL
+wsl ./setup.sh
+```
+
+**Windows: Permission denied on scripts**
+```bash
+# In Git Bash, make scripts executable
+chmod +x setup.sh run.sh stop.sh
+```
+
+**macOS: Command not found (lsof)**
+```bash
+# lsof should be pre-installed, but if missing:
+# The app now uses psutil which works cross-platform
+# Ensure psutil is installed: pip install psutil
+```
+
 ### Port Already in Use
 
+**macOS/Linux:**
 ```bash
 # Find process using port
 sudo lsof -i :50478
@@ -361,9 +489,35 @@ kill <PID>
 sudo lsof -i :8888
 ```
 
+**Windows:**
+```bash
+# Find process using port
+netstat -ano | findstr :50478
+taskkill /PID <PID> /F
+
+# Or find NSO tunnel ports
+netstat -ano | findstr :8888
+```
+
 ### SSH Tunnel Issues
 
+**Problem: Tunnel won't create / Port conflicts**
+- **Solution**: The app now **automatically detects and kills** existing tunnels
+- Simply click "Connect" again - old tunnels are cleaned up automatically
+- No manual intervention needed
+
 **Problem: Connection refused**
+
+*macOS/Linux:*
+```bash
+# Test SSH access
+ssh devm "echo Connection OK"
+
+# Verify NSO instance is running
+ssh devm "curl -k https://138.188.202.5:8888"
+```
+
+*Windows (Git Bash):*
 ```bash
 # Test SSH access
 ssh devm "echo Connection OK"
@@ -373,6 +527,8 @@ ssh devm "curl -k https://138.188.202.5:8888"
 ```
 
 **Problem: Tunnel not created**
+
+*macOS/Linux:*
 ```bash
 # Check active tunnels
 ps aux | grep "ssh -L"
@@ -382,10 +538,22 @@ ssh -L 8888:138.188.202.5:8888 -N devm
 # Try: curl -k https://localhost:8888
 ```
 
+*Windows:*
+```bash
+# Check active tunnels
+tasklist | findstr ssh
+
+# Manual tunnel test
+ssh -L 8888:138.188.202.5:8888 -N devm
+# Try: curl -k https://localhost:8888
+```
+
 **Problem: Multiple tunnels conflict**
+- **Old behavior**: Had to manually kill conflicting tunnels
+- **New behavior**: App automatically detects and kills existing tunnels
 - Each NSO instance uses a unique local port (8888-8892)
 - Check tunnel status in application UI
-- Close unused tunnels before creating new ones
+- App handles cleanup automatically when reconnecting
 
 ### Authentication Issues
 

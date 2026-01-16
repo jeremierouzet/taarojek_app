@@ -2,6 +2,7 @@
 ###############################################################################
 # Setup Script for Swisscom NSO Manager
 # This script sets up the application after git clone
+# Cross-platform: macOS, Linux, Windows (Git Bash/WSL)
 ###############################################################################
 
 set -e  # Exit on error
@@ -15,7 +16,20 @@ echo ""
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+# Detect OS
+OS_TYPE=$(uname -s)
+case "$OS_TYPE" in
+    Linux*)     OS_NAME="Linux";;
+    Darwin*)    OS_NAME="macOS";;
+    MINGW*|MSYS*|CYGWIN*)     OS_NAME="Windows";;
+    *)          OS_NAME="Unknown";;
+esac
+
+echo -e "${BLUE}Detected OS: ${OS_NAME}${NC}"
+echo ""
 
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -78,11 +92,19 @@ echo "Setup Complete!"
 echo "==========================================${NC}"
 echo ""
 echo "To start the application:"
-echo "  1. Activate virtual environment: source venv/bin/activate"
+if [ "$OS_NAME" = "Windows" ]; then
+    echo "  1. Activate virtual environment: source venv/Scripts/activate"
+else
+    echo "  1. Activate virtual environment: source venv/bin/activate"
+fi
 echo "  2. Start server: python manage.py runserver 50478"
 echo ""
 echo "Or use the run script:"
-echo "  ./run.sh"
+if [ "$OS_NAME" = "Windows" ]; then
+    echo "  bash run.sh (in Git Bash) or ./run.sh (in WSL)"
+else
+    echo "  ./run.sh"
+fi
 echo ""
 echo "Login credentials:"
 echo "  Username: taarojek"
@@ -90,3 +112,8 @@ echo "  Password: Sheyratan.0150n!"
 echo ""
 echo "Access at: http://localhost:50478"
 echo ""
+if [ "$OS_NAME" = "Windows" ]; then
+    echo -e "${YELLOW}Note: On Windows, ensure OpenSSH client is installed for SSH tunnels.${NC}"
+    echo -e "${YELLOW}You can install it via: Settings > Apps > Optional Features > OpenSSH Client${NC}"
+    echo ""
+fi
