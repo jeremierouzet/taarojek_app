@@ -29,48 +29,71 @@ class NSOClientCurl:
         self.username = username
         self.password = password
     
-    def _curl_request(self, endpoint, timeout=10):
+    def _curl_request(self, endpoint, timeout=10, method='GET', data=None):
         """
         Make a curl request to NSO.
         
         Args:
             endpoint (str): API endpoint path
             timeout (int): Request timeout in seconds
+            method (str): HTTP method - GET or POST
+            data (str): POST data (JSON string)
             
         Returns:
             tuple: (success, data/error_message)
         """
         import os
+        from pathlib import Path
         
-        url = f"{self.base_url}{endpoint}"
+        # Get the directory where this script is located
+        script_dir = Path(__file__).parent
+        wrapper_script = script_dir / "nso_curl.sh"
         
-        # Use shell=True to handle special characters in password properly
-        # Escape special characters for shell
-        password_escaped = self.password.replace("'", "'\\''")
-        cmd = f"curl -k -s --connect-timeout {timeout} --max-time {timeout} -u '{self.username}:{password_escaped}' '{url}'"
+        # Extract host and port from base_url
+        # Format: https://host:port
+        url_parts = self.base_url.replace('https://', '').replace('http://', '')
+        if ':' in url_parts:
+            host, port = url_parts.split(':')
+        else:
+            host = url_parts
+            port = '8888'
+        
+        # Call wrapper script directly
+        cmd = [
+            str(wrapper_script),
+            host,
+            port,
+            self.username,
+            self.password,
+            endpoint,
+            method
+        ]
+        
+        # Add data if POST
+        if data:
+            cmd.append(data)
         
         try:
-            # Pass current environment to subprocess (includes no_proxy settings)
-            logger.debug(f"Executing: curl -k -s --connect-timeout {timeout} -u '{self.username}:****' '{url}'")
+            logger.debug(f"Calling wrapper: {wrapper_script} {host}:{port} {endpoint} {method}")
             result = subprocess.run(
                 cmd,
-                shell=True,
                 capture_output=True,
                 text=True,
-                timeout=timeout + 5,  # Increased timeout buffer
-                env=os.environ.copy()  # Critical: inherit environment variables
+                timeout=timeout + 2
             )
             
             logger.debug(f"Return code: {result.returncode}, Output length: {len(result.stdout)}, Stderr: {result.stderr[:200]}")
             
-            if result.returncode == 0 and result.stdout:
+            # rc=0 or rc=28 (timeout) with data is OK
+            # NSO sometimes keeps connection open causing curl timeout, but data is received
+            if (result.returncode == 0 or result.returncode == 28) and result.stdout:
                 return True, result.stdout
             else:
                 error_msg = result.stderr if result.stderr else "No output"
                 return False, f"Curl failed (rc={result.returncode}): {error_msg}"
                 
         except subprocess.TimeoutExpired as e:
-            logger.error(f"Curl timeout after {timeout + 5}s for {url}")
+            logger.error(f"Curl timeout after {timeout + 2}s for {endpoint}")
             return False, f"Request timeout (>{timeout}s)"
         except Exception as e:
             logger.exception(f"Error executing curl: {e}")
@@ -110,7 +133,8 @@ class NSOClientCurl:
         Returns:
             dict: Result with devices list
         """
-        success, data = self._curl_request('/restconf/data/tailf-ncs:devices/device')
+        # Use /devices endpoint instead of /devices/device to avoid "too many instances" error
+        success, data = self._curl_request('/restconf/data/tailf-ncs:devices?content=config', timeout=15)
         
         if not success:
             return {
@@ -121,10 +145,12 @@ class NSOClientCurl:
         
         devices = []
         
-        # Parse XML response (NSO typically returns XML)
-        # Simple parsing - look for device names
+        # Parse XML response - extract device names
+        # Look for <device><name>xxx</name> pattern
         import re
-        device_names = re.findall(r'<name>([^<]+)</name>', data)
+        # Match device blocks and extract names
+        device_pattern = r'<device>\s*<name>([^<]+)</name>'
+        device_names = re.findall(device_pattern, data)
         
         for name in device_names:
             devices.append({'name': name})
@@ -137,7 +163,7 @@ class NSOClientCurl:
     
     def check_device_sync(self, device_name):
         """
-        Check sync status of a specific device.
+        Check sync status of a specific device using NSO check-sync operation.
         
         Args:
             device_name (str): Device name
@@ -145,14 +171,22 @@ class NSOClientCurl:
         Returns:
             dict: Sync status
         """
-        endpoint = f'/restconf/data/tailf-ncs:devices/device={device_name}/check-sync'
-        success, data = self._curl_request(endpoint)
+        # Use NSO operational endpoint with POST
+        endpoint = f'/restconf/operations/tailf-ncs:devices/device={device_name}/check-sync'
+        post_data = '{}'  # Empty JSON object for the operation
+        
+        success, data = self._curl_request(endpoint, method='POST', data=post_data, timeout=5)
         
         if not success:
             return {'in_sync': False, 'error': data}
         
         # Parse sync status from response
-        in_sync = 'in-sync' in data.lower()
+        # NSO check-sync returns: {"tailf-ncs:output":{"result":"in-sync"}} or "out-of-sync"
+        # Need to check for exact match of "in-sync", not just substring
+        import re
+        # Look for "result": "in-sync" pattern
+        in_sync_match = re.search(r'"result":\s*"in-sync"', data)
+        in_sync = bool(in_sync_match)
         
         return {
             'in_sync': in_sync,

@@ -10,7 +10,6 @@ from django.contrib.auth.decorators import login_required
 import os
 
 from .ssh_tunnel import tunnel_manager
-from .nso_client import NSOClient
 from .nso_client_curl import NSOClientCurl
 from nso_manager.nso_config import get_all_instances, get_nso_instance
 
@@ -122,8 +121,8 @@ def check_sync(request, instance_name):
             'message': 'NSO credentials not configured for this instance'
         })
     
-    # Try requests-based client first (faster if it works)
-    client = NSOClient(
+    # Use curl-based client (shell script wrapper)
+    client = NSOClientCurl(
         host=nso_host,
         port=nso_port,
         username=nso_user,
@@ -137,9 +136,31 @@ def check_sync(request, instance_name):
     
     # Check all devices sync
     result = client.check_all_devices_sync()
-    result['instance'] = instance_name
     
-    return JsonResponse(result)
+    # Transform result to match frontend expectations
+    if result.get('success'):
+        stats = result.get('stats', {})
+        devices = result.get('devices', [])
+        
+        # Format device data for frontend
+        formatted_results = []
+        for device in devices:
+            formatted_results.append({
+                'device': device.get('name'),
+                'in_sync': device.get('in_sync'),
+                'sync_result': 'in-sync' if device.get('in_sync') else 'out-of-sync'
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'instance': instance_name,
+            'total_devices': stats.get('total', 0),
+            'in_sync': stats.get('in_sync', 0),
+            'out_of_sync': stats.get('out_of_sync', 0),
+            'results': formatted_results
+        })
+    else:
+        return JsonResponse(result)
 
 
 @login_required(login_url='/login/')

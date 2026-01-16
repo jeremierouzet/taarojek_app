@@ -18,11 +18,14 @@ Django web application for managing NSO instances and checking device synchroniz
 
 - **Multi-Instance Support**: Connect to 5 different NSO environments (Dune and Titan: Integration, E2E, Production)
 - **Simultaneous Connections**: Connect to multiple NSO instances at the same time with unique local ports
-- **SSH Tunnel Management**: Automatically creates SSH tunnels to NSO instances through jump host
-- **Device Sync Checking**: Check if all devices are synchronized with NSO
+- **SSH Tunnel Management**: Automatically creates SSH tunnels to NSO instances through jump host (disabled on dev-vm)
+- **Direct Access Mode**: Detects when running on dev-vm and connects directly to NSO without tunnels
+- **Device Sync Checking**: Check if all devices are synchronized with NSO using RESTCONF API
+- **Robust NSO Client**: Curl-based client handles NSO connection behavior and SSL/TLS issues
 - **Swisscom Branding**: Custom UI with Swisscom corporate design
 - **Authentication**: Secure login system with username/password
 - **Service Mode**: Can run as a systemd service for production deployment
+- **Background Execution**: Runs with nohup for persistent operation
 
 ## Quick Start
 
@@ -238,6 +241,19 @@ taarojek_app/
 - Authentication handling
 - SSL verification disabled (for internal use)
 
+**NSO Curl Client** (`device_sync/nso_client_curl.py`)
+- Alternative client using curl subprocess
+- Bypasses Python requests SSL/TLS issues
+- Accepts curl rc=28 (NSO connection behavior)
+- Supports GET and POST operations
+- Used for device sync checks
+
+**Curl Wrapper** (`device_sync/nso_curl.sh`)
+- Standalone bash script for NSO API calls
+- Isolates curl from Python environment
+- Handles NSO connection timeout gracefully
+- Parameters: HOST PORT USERNAME PASSWORD ENDPOINT METHOD DATA
+
 ## Deployment Checklist
 
 ### First Time Setup
@@ -397,6 +413,23 @@ export NSO_PASSWORD="your_password"
 ```bash
 curl -k -u admin:admin https://localhost:8888/restconf/data/tailf-ncs:devices/device
 ```
+
+**Problem: Python requests SSL/TLS timeout errors**
+- **Root Cause**: Python's requests library may have SSL/TLS compatibility issues with NSO
+- **Solution**: Application uses `nso_client_curl.py` which wraps curl in a subprocess
+- **Implementation**: Shell script wrapper (`nso_curl.sh`) bypasses Python SSL issues
+- **Note**: Curl exit code 28 (timeout) is accepted if data is received (NSO keeps connections open)
+
+**Problem: "too many instances: 14" error**
+- **Root Cause**: NSO REST API limits number of devices returned in single query
+- **Solution**: Use `/restconf/data/tailf-ncs:devices?content=config` instead of `/devices/device`
+- **Implementation**: `get_all_devices()` now uses correct endpoint with proper XML parsing
+
+**Problem: Curl timeout but operation succeeds**
+- **Expected Behavior**: NSO keeps HTTP connections open after sending data
+- **Curl Response**: Exit code 28 (operation timeout) with complete data in stdout
+- **Not an Error**: Application correctly handles this by checking if data was received
+- **Technical Detail**: `nso_client_curl.py` accepts `rc=28` when `stdout` contains data
 
 ### Service Issues
 
