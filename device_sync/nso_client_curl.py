@@ -45,26 +45,33 @@ class NSOClientCurl:
         url = f"{self.base_url}{endpoint}"
         
         # Use shell=True to handle special characters in password properly
-        cmd = f"curl -k -s --connect-timeout {timeout} -u '{self.username}:{self.password}' '{url}'"
+        # Escape special characters for shell
+        password_escaped = self.password.replace("'", "'\\''")
+        cmd = f"curl -k -s --connect-timeout {timeout} --max-time {timeout} -u '{self.username}:{password_escaped}' '{url}'"
         
         try:
             # Pass current environment to subprocess (includes no_proxy settings)
+            logger.debug(f"Executing: curl -k -s --connect-timeout {timeout} -u '{self.username}:****' '{url}'")
             result = subprocess.run(
                 cmd,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=timeout + 2,
+                timeout=timeout + 5,  # Increased timeout buffer
                 env=os.environ.copy()  # Critical: inherit environment variables
             )
             
-            if result.returncode == 0:
+            logger.debug(f"Return code: {result.returncode}, Output length: {len(result.stdout)}, Stderr: {result.stderr[:200]}")
+            
+            if result.returncode == 0 and result.stdout:
                 return True, result.stdout
             else:
-                return False, f"Curl failed: {result.stderr}"
+                error_msg = result.stderr if result.stderr else "No output"
+                return False, f"Curl failed (rc={result.returncode}): {error_msg}"
                 
-        except subprocess.TimeoutExpired:
-            return False, "Request timeout"
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"Curl timeout after {timeout + 5}s for {url}")
+            return False, f"Request timeout (>{timeout}s)"
         except Exception as e:
             logger.exception(f"Error executing curl: {e}")
             return False, f"Error: {str(e)}"

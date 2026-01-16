@@ -122,8 +122,8 @@ def check_sync(request, instance_name):
             'message': 'NSO credentials not configured for this instance'
         })
     
-    # Use curl-based client as it handles SSL/TLS better than requests library
-    client = NSOClientCurl(
+    # Try requests-based client first (faster if it works)
+    client = NSOClient(
         host=nso_host,
         port=nso_port,
         username=nso_user,

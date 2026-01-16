@@ -55,11 +55,10 @@ class NSOClient:
         # Mount custom TLS adapter for legacy SSL support
         self.session.mount('https://', LegacyTLSAdapter())
         
-        # Disable proxy for direct NSO connections (already in no_proxy)
-        self.session.proxies = {
-            'http': None,
-            'https': None,
-        }
+        # CRITICAL: Completely disable proxy - set to empty dict, not None
+        # requests library sometimes ignores None but respects empty dict
+        self.session.trust_env = False  # Don't trust environment proxy settings
+        self.session.proxies = {}
         
         if username and password:
             self.session.auth = (username, password)
@@ -74,7 +73,7 @@ class NSOClient:
         try:
             response = self.session.get(
                 f"{self.base_url}/restconf/data/tailf-ncs:devices",
-                timeout=10  # Increased timeout for slower connections
+                timeout=(5, 15)  # (connect timeout, read timeout)
             )
             
             if response.status_code == 200:
