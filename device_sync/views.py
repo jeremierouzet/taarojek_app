@@ -11,6 +11,7 @@ import os
 
 from .ssh_tunnel import tunnel_manager
 from .nso_client import NSOClient
+from .nso_client_curl import NSOClientCurl
 from nso_manager.nso_config import get_all_instances, get_nso_instance
 
 
@@ -121,8 +122,8 @@ def check_sync(request, instance_name):
             'message': 'NSO credentials not configured for this instance'
         })
     
-    # Create NSO client with the correct host and port
-    client = NSOClient(
+    # Use curl-based client as it handles SSL/TLS better than requests library
+    client = NSOClientCurl(
         host=nso_host,
         port=nso_port,
         username=nso_user,
