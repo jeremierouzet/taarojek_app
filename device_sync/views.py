@@ -11,7 +11,7 @@ import os
 
 from .ssh_tunnel import tunnel_manager
 from .nso_client_curl import NSOClientCurl
-from nso_manager.nso_config import get_all_instances, get_nso_instance
+from nso_manager.nso_config import get_all_instances, get_nso_instance, ON_DEVM
 
 
 @login_required(login_url='/login/')
@@ -41,6 +41,14 @@ def connect_instance(request, instance_name):
         return JsonResponse({
             'success': False,
             'message': f'Unknown instance: {instance_name}'
+        })
+    
+    # Check if instance requires jump01 but we're on devm (jump01 not accessible from devm)
+    if ON_DEVM and instance.get('ssh_host') == 'jump01':
+        return JsonResponse({
+            'success': False,
+            'message': f'{instance["name"]} requires jump01 access which is not available from dev-vm. '
+                      'Please use this instance from your local machine.'
         })
     
     # Check if tunnels are needed (auto-detected based on hostname)
