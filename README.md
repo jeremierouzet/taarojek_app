@@ -38,10 +38,22 @@ Django web application for managing NSO instances and checking device synchroniz
 - **Python**: 3.9 or higher
 - **Operating System**: macOS, Linux, or Windows (Git Bash/WSL)
 - **SSH Client**: OpenSSH for tunnel management
+- **curl**: Command-line tool for HTTP requests (used for NSO API calls)
+  - macOS/Linux: Pre-installed
+  - Windows: Install via Git Bash or use WSL
+
+### Required Ports
+
+The following ports must be available on your local machine:
+
+- **50478**: Django web application server
+- **8888-8892**: SSH tunnel local endpoints (one per NSO instance)
 
 ### Required Environment Variables
 
-The application uses environment variables for NSO authentication credentials. Set these before running the application:
+**CRITICAL**: Environment variables must be defined in your shell configuration file, not just exported in the current terminal session.
+
+Add these to `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`:
 
 ```bash
 # Integration environments (Dune & Titan Integration)
@@ -57,7 +69,18 @@ export NSO_USER_PROD="your_username"
 export NSO_PASS_PROD="your_password"
 ```
 
+**Why shell config file?** The `run.sh` script sources these files to load credentials automatically.
+
 **Default Values**: If not set, all credentials default to `admin/admin` (which may not work for all environments).
+
+**After updating your shell config:**
+```bash
+# Reload your shell configuration
+source ~/.zshrc  # or ~/.bashrc or ~/.bash_profile
+
+# Verify variables are set
+echo $NSO_USER_INT
+```
 
 ### SSH Configuration
 
