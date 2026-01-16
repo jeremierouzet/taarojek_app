@@ -33,7 +33,7 @@ def index(request):
 @login_required(login_url='/login/')
 def connect_instance(request, instance_name):
     """
-    Connect to an NSO instance (create tunnel)
+    Connect to an NSO instance (create tunnel or mark as connected for direct access)
     """
     instance = get_nso_instance(instance_name)
     
@@ -41,6 +41,20 @@ def connect_instance(request, instance_name):
         return JsonResponse({
             'success': False,
             'message': f'Unknown instance: {instance_name}'
+        })
+    
+    # Check if tunnels are needed (auto-detected based on hostname)
+    if not instance.get('use_tunnel', True):
+        # Running on dev-vm, direct access - just mark as "connected"
+        tunnel_manager.active_tunnels[instance_name] = {
+            'pid': 0,  # No actual process
+            'local_port': None,  # Direct access
+            'direct': True
+        }
+        return JsonResponse({
+            'success': True,
+            'message': f'Direct access to {instance["name"]} (no tunnel needed)',
+            'direct_access': True
         })
     
     # Get the instance-specific local port
@@ -81,10 +95,21 @@ def check_sync(request, instance_name):
         })
     
     # Get the local port for this instance's tunnel
-    local_port = tunnel_manager.get_tunnel_port(instance_name)
-    if not local_port:
-        # Fallback to configured port if tunnel info not available
-        local_port = instance.get('local_port', 8888)
+    tunnel_info = tunnel_manager.active_tunnels.get(instance_name, {})
+    
+    # Check if using direct access (running on dev-vm)
+    if tunnel_info.get('direct'):
+        # Direct access - use the NSO instance's actual IP and port
+        nso_host = instance['ip']
+        nso_port = instance['port']
+    else:
+        # Tunnel mode - use localhost with local port
+        nso_host = 'localhost'
+        local_port = tunnel_manager.get_tunnel_port(instance_name)
+        if not local_port:
+            # Fallback to configured port if tunnel info not available
+            local_port = instance.get('local_port', 8888)
+        nso_port = local_port
     
     # Get NSO credentials from instance configuration (which reads from environment)
     nso_user = instance.get('username')
@@ -96,10 +121,10 @@ def check_sync(request, instance_name):
             'message': 'NSO credentials not configured for this instance'
         })
     
-    # Create NSO client with the correct port
+    # Create NSO client with the correct host and port
     client = NSOClient(
-        host='localhost',
-        port=local_port,
+        host=nso_host,
+        port=nso_port,
         username=nso_user,
         password=nso_pass
     )

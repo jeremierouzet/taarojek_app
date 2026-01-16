@@ -6,6 +6,14 @@ This module contains configuration for different NSO instances
 """
 
 import os
+import socket
+
+# Detect if running on dev-vm or local machine
+HOSTNAME = socket.gethostname()
+ON_DEVM = 'dev-vm' in HOSTNAME.lower()
+
+# Tunnel mode: if on dev-vm, we can access NSO directly (no tunnels needed)
+USE_TUNNELS = not ON_DEVM
 
 NSO_INSTANCES = {
     'dune-integration': {
@@ -14,6 +22,7 @@ NSO_INSTANCES = {
         'port': 8888,
         'local_port': 8888,  # Unique local port for tunnel
         'ssh_host': 'devm',
+        'use_tunnel': USE_TUNNELS,  # Auto-detect based on hostname
         'description': 'Dune integration environment for testing',
         'color': '#4CAF50',  # Green
         'environment': 'integration',
@@ -27,6 +36,7 @@ NSO_INSTANCES = {
         'port': 8888,
         'local_port': 8889,  # Unique local port for tunnel
         'ssh_host': 'devm',
+        'use_tunnel': USE_TUNNELS,  # Auto-detect based on hostname
         'description': 'Titan integration environment for testing',
         'color': '#66BB6A',  # Light Green
         'environment': 'integration',
@@ -40,6 +50,7 @@ NSO_INSTANCES = {
         'port': 8888,
         'local_port': 8890,  # Unique local port for tunnel
         'ssh_host': 'devm',
+        'use_tunnel': USE_TUNNELS,  # Auto-detect based on hostname
         'description': 'Dune end-to-end testing environment',
         'color': '#2196F3',  # Blue
         'environment': 'e2e',
@@ -53,6 +64,7 @@ NSO_INSTANCES = {
         'port': 8888,
         'local_port': 8891,  # Unique local port for tunnel
         'ssh_host': 'devm',
+        'use_tunnel': USE_TUNNELS,  # Auto-detect based on hostname
         'description': 'Titan end-to-end testing environment',
         'color': '#42A5F5',  # Light Blue
         'environment': 'e2e',
@@ -66,6 +78,7 @@ NSO_INSTANCES = {
         'port': 8888,
         'local_port': 8892,  # Unique local port for tunnel
         'ssh_host': 'devm',
+        'use_tunnel': USE_TUNNELS,  # Auto-detect based on hostname
         'description': 'Titan production environment - use with caution',
         'color': '#F44336',  # Red
         'environment': 'production',
