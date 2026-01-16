@@ -164,46 +164,30 @@ class NSOClientCurl:
         devices = []
         
         # Parse XML response - extract device names
-        # Look for <device><name>xxx</name> pattern
         import re
         
-        # More flexible regex pattern to handle various XML formatting
-        # Matches <name>xxx</name> within device blocks
-        device_pattern = r'<name>([^<]+)</name>'
-        all_names = re.findall(device_pattern, data)
-        
-        # The response contains many <name> tags (for various elements)
-        # We need to identify which are device names
-        # In NSO XML structure, device names appear in specific context
-        
-        # Better approach: look for the device list structure
-        # Extract the devices section and then parse names
-        devices_section_match = re.search(
-            r'<devices[^>]*>(.*?)</devices>',
+        # Find all <device> blocks directly (don't try to capture entire devices section)
+        # This is more efficient for large responses (1.7MB+)
+        # Pattern: <device>...</device> or <device ...>...</device>
+        device_blocks = re.findall(
+            r'<device[^>]*>(.*?)</device>',
             data,
             re.DOTALL
         )
         
-        if devices_section_match:
-            devices_section = devices_section_match.group(1)
-            # Now find all <device> blocks
-            device_blocks = re.findall(
-                r'<device>(.*?)</device>',
-                devices_section,
-                re.DOTALL
-            )
-            
-            logger.info(f"Found {len(device_blocks)} device blocks")
-            
+        logger.info(f"Found {len(device_blocks)} device blocks in response")
+        
+        if device_blocks:
+            # Extract name from each device block
             for block in device_blocks:
-                # Extract name from each device block
+                # Find the first <name> tag in this device block
                 name_match = re.search(r'<name>([^<]+)</name>', block)
                 if name_match:
                     device_name = name_match.group(1)
                     devices.append({'name': device_name})
         else:
-            # Fallback to original method
-            logger.warning("Could not find devices section, using fallback method")
+            # Fallback: simple pattern for device name immediately after device tag
+            logger.warning("No device blocks found, using simple fallback")
             device_pattern = r'<device>\s*<name>([^<]+)</name>'
             device_names = re.findall(device_pattern, data)
             for name in device_names:
