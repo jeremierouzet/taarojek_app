@@ -1,0 +1,151 @@
+{% extends "device_sync/base.html" %}
+
+{% block title %}Login - NSO Manager{% endblock %}
+
+{% block extra_css %}
+<style>
+    .login-container {
+        max-width: 400px;
+        margin: 5rem auto;
+    }
+    
+    .login-card {
+        background: white;
+        border-radius: 8px;
+        padding: 2.5rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    .login-header {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    
+    .login-logo {
+        width: 80px;
+        height: 80px;
+        background-color: var(--swisscom-blue);
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+        font-size: 2rem;
+        margin: 0 auto 1rem;
+    }
+    
+    .login-title {
+        color: var(--swisscom-blue);
+        font-size: 1.5rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .login-subtitle {
+        color: #666;
+        font-size: 0.875rem;
+    }
+    
+    .form-group {
+        margin-bottom: 1.5rem;
+    }
+    
+    .form-label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 0.5rem;
+        color: var(--swisscom-dark-gray);
+    }
+    
+    .form-input {
+        width: 100%;
+        padding: 0.75rem;
+        border: 2px solid var(--swisscom-gray);
+        border-radius: 4px;
+        font-size: 1rem;
+        transition: border-color 0.3s ease;
+    }
+    
+    .form-input:focus {
+        outline: none;
+        border-color: var(--swisscom-blue);
+    }
+    
+    .login-btn {
+        width: 100%;
+        padding: 1rem;
+        background-color: var(--swisscom-blue);
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 1rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+    }
+    
+    .login-btn:hover {
+        background-color: var(--swisscom-light-blue);
+    }
+    
+    .error-message {
+        background-color: #ffebee;
+        color: #c62828;
+        padding: 0.75rem;
+        border-radius: 4px;
+        margin-bottom: 1.5rem;
+        border-left: 4px solid #f44336;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-card">
+        <div class="login-header">
+            <div class="login-logo">SC</div>
+            <h2 class="login-title">NSO Manager</h2>
+            <p class="login-subtitle">Network Operations Portal</p>
+        </div>
+        
+        {% if error %}
+        <div class="error-message">
+            {{ error }}
+        </div>
+        {% endif %}
+        
+        <form method="post">
+            {% csrf_token %}
+            
+            <div class="form-group">
+                <label for="username" class="form-label">Username</label>
+                <input 
+                    type="text" 
+                    id="username" 
+                    name="username" 
+                    class="form-input"
+                    required
+                    autofocus
+                    autocomplete="username"
+                >
+            </div>
+            
+            <div class="form-group">
+                <label for="password" class="form-label">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    class="form-input"
+                    required
+                    autocomplete="current-password"
+                >
+            </div>
+            
+            <button type="submit" class="login-btn">
+                Sign In
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

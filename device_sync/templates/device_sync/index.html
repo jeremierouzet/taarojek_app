@@ -1,0 +1,195 @@
+{% extends "device_sync/base.html" %}
+
+{% block title %}NSO Instance Selection{% endblock %}
+
+{% block extra_css %}
+<style>
+    .instance-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 1.5rem;
+        margin-top: 2rem;
+    }
+    
+    .instance-card {
+        background: white;
+        border-radius: 8px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        border-left: 4px solid;
+    }
+    
+    .instance-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    .instance-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+    }
+    
+    .instance-title {
+        font-size: 1.25rem;
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+    }
+    
+    .instance-description {
+        color: #666;
+        font-size: 0.875rem;
+        margin-bottom: 1rem;
+    }
+    
+    .instance-details {
+        font-size: 0.875rem;
+        color: #666;
+        margin-bottom: 1rem;
+    }
+    
+    .instance-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+    
+    .btn-full {
+        flex: 1;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1>NSO Instance Manager</h1>
+        <p>Select an NSO instance to connect and manage device synchronization</p>
+    </div>
+    
+    <div class="instance-grid">
+        {% for key, instance in instances.items %}
+        <div class="instance-card" style="border-left-color: {{ instance.color }};">
+            <div class="instance-header">
+                <div class="instance-title">{{ instance.name }}</div>
+                {% if key in active_tunnels %}
+                <span class="status-badge status-connected">Connected</span>
+                {% else %}
+                <span class="status-badge status-disconnected">Disconnected</span>
+                {% endif %}
+            </div>
+            
+            <div class="instance-description">
+                {{ instance.description }}
+            </div>
+            
+            <div class="instance-details">
+                <div><strong>Remote:</strong> {{ instance.ip }}:{{ instance.port }}</div>
+                <div><strong>Local Port:</strong> {{ instance.local_port }}</div>
+                <div><strong>SSH Host:</strong> {{ instance.ssh_host }}</div>
+                {% if key in active_tunnels %}
+                <div><strong>URL:</strong> <a href="https://localhost:{{ instance.local_port }}" target="_blank">https://localhost:{{ instance.local_port }}</a></div>
+                {% endif %}
+            </div>
+            
+            <div class="instance-actions">
+                {% if key in active_tunnels %}
+                <button class="btn btn-danger btn-full" onclick="disconnectInstance('{{ key }}')">
+                    Disconnect
+                </button>
+                <a href="{% url 'device_sync:sync_view' key %}" class="btn btn-primary btn-full">
+                    Check Devices
+                </a>
+                {% else %}
+                <button class="btn btn-success btn-full" onclick="connectInstance('{{ key }}')">
+                    Connect
+                </button>
+                {% endif %}
+            </div>
+            
+            <div id="status-{{ key }}" class="alert alert-info" style="display: none; margin-top: 1rem;">
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function connectInstance(instanceName) {
+    const statusDiv = document.getElementById('status-' + instanceName);
+    statusDiv.style.display = 'block';
+    statusDiv.className = 'alert alert-info';
+    statusDiv.innerHTML = '<span class="loading"></span> Connecting to ' + instanceName + '...';
+    
+    fetch('/connect/' + instanceName + '/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken'),
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.className = 'alert alert-success';
+            statusDiv.innerHTML = '✓ ' + data.message;
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            statusDiv.className = 'alert alert-error';
+            statusDiv.innerHTML = '✗ ' + data.message;
+        }
+    })
+    .catch(error => {
+        statusDiv.className = 'alert alert-error';
+        statusDiv.innerHTML = '✗ Connection failed: ' + error;
+    });
+}
+
+function disconnectInstance(instanceName) {
+    const statusDiv = document.getElementById('status-' + instanceName);
+    statusDiv.style.display = 'block';
+    statusDiv.className = 'alert alert-info';
+    statusDiv.innerHTML = '<span class="loading"></span> Disconnecting...';
+    
+    fetch('/disconnect/' + instanceName + '/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': getCookie('csrftoken'),
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.className = 'alert alert-success';
+            statusDiv.innerHTML = '✓ ' + data.message;
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            statusDiv.className = 'alert alert-error';
+            statusDiv.innerHTML = '✗ ' + data.message;
+        }
+    })
+    .catch(error => {
+        statusDiv.className = 'alert alert-error';
+        statusDiv.innerHTML = '✗ Failed: ' + error;
+    });
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+</script>
+{% endblock %}
