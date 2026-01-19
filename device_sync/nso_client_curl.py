@@ -243,6 +243,7 @@ class NSOClientCurl:
         success, data = self._curl_request(endpoint, method='POST', data=post_data, timeout=5)
         
         if not success:
+            logger.error(f"Curl request failed for {device_name}: {data}")
             return {'in_sync': False, 'error': data}
         
         # Parse sync status from response
@@ -255,6 +256,7 @@ class NSOClientCurl:
         
         if result_match:
             status = result_match.group(1)
+            logger.debug(f"Device {device_name}: status='{status}', response preview: {data[:300]}")
             # Only "out-of-sync" means the device is actually out of sync
             # "in-sync" = in sync
             # "locked" = device is locked (treated as in-sync, not an error)
@@ -262,6 +264,7 @@ class NSOClientCurl:
             in_sync = (status != "out-of-sync")
         else:
             # If we can't parse the result, default to False (out of sync)
+            logger.warning(f"Could not parse sync result for {device_name}, response: {data[:500]}")
             in_sync = False
         
         return {
