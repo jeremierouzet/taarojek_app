@@ -84,30 +84,59 @@ echo $NSO_USER_INT
 
 ### SSH Configuration
 
+#### SSH Key Setup
+
+For all SSH connections, ensure you have SSH key authentication configured:
+
+```bash
+# Check if you have SSH keys
+ls -la ~/.ssh/*.pub
+
+# If not, generate one
+ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
+```
+
 #### From Local Machine (Windows/macOS/Linux)
 
 You need SSH access configured for:
 
 1. **For Dev/Test/E2E instances**: SSH access to `devm` (jump host)
    ```bash
+   # Add to ~/.ssh/config
+   Host devm
+       HostName opal-gateway.noctools.swissptt.ch
+       Port 443
+       User your_username
+   
    # Test connectivity
-   ssh devm
+   ssh devm echo "Connection works"
    ```
 
-2. **For Production instance**: SSH access to `jump01` on port 443 with MFA
+2. **For Production instance**: SSH access to `jump01` on port 443 with ControlMaster
    ```bash
    # Add to ~/.ssh/config
    Host jump01
        HostName opal-jump01.noctools.swissptt.ch
        Port 443
        User your_username
+       IdentityFile ~/.ssh/opal_key
+       ForwardAgent yes
        ControlMaster auto
-       ControlPath ~/.ssh/cm-%r@%h:%p
+       ControlPath ~/.ssh/control-%C
        ControlPersist 10m
    
-   # Establish master connection (will prompt for MFA token)
-   ssh -fN jump01
+   # Note: jump01 requires 2FA authentication
+   # The run.sh script will prompt to establish the connection
+   # Alternatively, establish it manually:
+   ssh jump01  # Enter 2FA code when prompted
    ```
+
+**Important for Production (jump01):**
+- Requires 2FA authentication
+- Uses ControlMaster for connection reuse
+- The `run.sh` script automatically detects if a ControlMaster connection exists
+- If not, it prompts you to establish one before starting the app
+- ControlMaster connection persists for 10 minutes after disconnection
 
 #### From dev-vm Server
 
@@ -154,9 +183,11 @@ cd taarojek_app
 
 # 2. Run setup (one-time)
 ./setup.sh
+# Note: setup.sh no longer displays credentials for security
 
 # 3. Start the application
 ./run.sh
+# If accessing Production, you'll be prompted to establish jump01 connection (2FA required)
 
 # 4. View logs (optional)
 tail -f logs/nso-manager.log
@@ -186,9 +217,7 @@ bash stop.sh
 
 **Access:** http://localhost:50478
 
-**Default Login:**
-- Username: `taarojek`
-- Password: `Sheyratan.0150n!`
+**Default Login:** Check with your administrator (credentials not displayed during setup for security)
 
 ## NSO Instance Configuration
 
@@ -389,19 +418,27 @@ netstat -ano | findstr :8892  # Titan Production
 
 ### Smart Tunnel Management
 
-The application now features **intelligent tunnel management**:
+The application features **intelligent, cross-platform tunnel management**:
 
 - **Automatic Detection**: Detects if a tunnel is already running on the required port
-- **Auto-Kill**: Automatically kills any existing tunnel on the port before creating a new one
+- **Auto-Kill with lsof**: Uses `lsof` fallback on macOS when `psutil` lacks permissions
+- **Hybrid Approach**: 
+  - Standard hosts (devm): Uses `Popen` for reliable backgrounding
+  - jump01: Uses SSH `-f` flag with ControlMaster for 2FA compatibility
 - **Cross-Platform**: Works consistently across Windows, macOS, and Linux
 - **No Manual Cleanup**: No need to manually kill tunnels before reconnecting
-- **Process Tracking**: Uses `psutil` library for reliable cross-platform process management
+- **Process Tracking**: Multi-method PID discovery with retry logic
 
 **How it works:**
 1. When you click "Connect", the app checks if the port is in use
-2. If an old tunnel exists, it's automatically terminated
-3. A new tunnel is created and tracked
-4. The app monitors tunnel health and recreates if needed
+2. If an old tunnel exists, it's automatically terminated (using `psutil` or `lsof`)
+3. A new tunnel is created using the appropriate method for the host
+4. The app monitors tunnel health and provides detailed status
+
+**macOS-Specific Improvements:**
+- Socket-based port detection when `psutil` requires elevated permissions
+- `lsof` fallback for finding processes using ports
+- Enhanced process running detection with `ps` command fallback
 
 ## Project Structure
 
@@ -428,16 +465,23 @@ taarojek_app/
 ### Key Components
 
 **SSH Tunnel Manager** (`device_sync/ssh_tunnel.py`)
-- **Cross-platform support**: Works on Windows, macOS, and Linux
+- **Cross-platform support**: Works on Windows, macOS, and Linux with platform-specific optimizations
+- **Hybrid tunnel creation**:
+  - Standard hosts (devm): Uses `subprocess.Popen` for reliable backgrounding
+  - jump01 with ControlMaster: Uses SSH `-f` flag for proper 2FA integration
 - **Smart tunnel management**: 
-  - Automatically detects existing tunnels on the same port
+  - Automatically detects existing tunnels on ports using `psutil` and `lsof` fallback
   - Kills stale tunnels before creating new ones
-  - Tracks tunnel processes reliably using `psutil`
-- Creates SSH tunnels: `ssh -L LOCAL_PORT:NSO_IP:8888 -N -f devm`
+  - Multi-method PID discovery with retry logic
+  - Enhanced port detection using socket connect tests on macOS
+- **macOS compatibility**:
+  - Socket-based port detection when `psutil.net_connections()` requires elevated permissions
+  - `lsof` fallback for finding processes on ports
+  - `ps` command fallback for process existence checks
 - Each instance uses unique local port (8888-8892)
 - Supports multiple simultaneous connections
 - Manages tunnel lifecycle (create, check, close)
-- Platform-specific process management (handles PID differences between OSes)
+- SSH options: ConnectTimeout, ServerAliveInterval, ExitOnForwardFailure
 
 **NSO Client** (`device_sync/nso_client.py`)
 - REST API integration with NSO
@@ -914,6 +958,53 @@ To extend functionality:
 - Tunnels use SSH key authentication
 - Application runs on port 50478
 - Service runs as current user, not root
+- **Credential Display**: `setup.sh` no longer echoes credentials to terminal for security
+
+## Recent Updates
+
+### Version 2.2 - SSH Tunnel Enhancements (2025-01-15)
+
+**macOS Compatibility Improvements:**
+- Fixed port detection on macOS using socket connect tests instead of `psutil.net_connections()` which requires elevated permissions
+- Added `lsof` fallback for finding processes on ports when `psutil` access is denied
+- Added `ps` command fallback for process existence checks
+- Enhanced error handling for macOS-specific permission issues
+
+**jump01 Production Access:**
+- Implemented ControlMaster support for jump01 (required for 2FA)
+- Added automatic ControlMaster socket detection in `run.sh`
+- Added user prompt to establish jump01 connection if ControlMaster not active
+- ControlMaster connection persists for 10 minutes after disconnection
+
+**Hybrid Tunnel Creation:**
+- Standard hosts (devm): Uses `subprocess.Popen` for reliable background process management
+- jump01 with ControlMaster: Uses SSH `-f` flag for proper 2FA integration
+- Improved PID discovery with multiple retry attempts and `lsof` fallback
+- Enhanced tunnel verification with connection testing
+
+**SSH Configuration:**
+- Added `ConnectTimeout` and `ExitOnForwardFailure` SSH options
+- Set `TERM=dumb` environment variable to prevent terminal errors
+- Improved error handling and logging for SSH tunnel failures
+
+**Security:**
+- Removed credential echo from `setup.sh` to prevent displaying passwords in terminal output
+
+### Version 2.1 - Smart Tunnel Management (2024-12)
+
+**Cross-Platform Support:**
+- Works on Windows, macOS, and Linux
+- Platform-specific process management
+
+**Automatic Tunnel Detection:**
+- Detects existing tunnels on same port
+- Automatically kills stale tunnels before reconnecting
+- No more manual cleanup required
+
+**Multiple Instance Support:**
+- Each NSO instance uses unique local port (8888-8892)
+- All instances can be connected simultaneously
+- Independent tunnel lifecycle management
 
 ## License
 
