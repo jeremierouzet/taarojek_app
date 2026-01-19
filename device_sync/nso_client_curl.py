@@ -277,7 +277,40 @@ class NSOClientCurl:
             }
         
         devices = devices_result.get('devices', [])
+        return self._check_devices_sync(devices)
+    
+    def check_selected_devices_sync(self, device_names):
+        """
+        Check sync status for selected devices.
         
+        Args:
+            device_names (list): List of device names to check
+            
+        Returns:
+            dict: Sync status for selected devices
+        """
+        if not device_names:
+            return {
+                'success': False,
+                'message': 'No devices selected',
+                'stats': {'total': 0, 'in_sync': 0, 'out_of_sync': 0},
+                'devices': []
+            }
+        
+        # Create device objects from names
+        devices = [{'name': name} for name in device_names]
+        return self._check_devices_sync(devices)
+    
+    def _check_devices_sync(self, devices):
+        """
+        Internal method to check sync status for a list of devices.
+        
+        Args:
+            devices (list): List of device dictionaries with 'name' key
+            
+        Returns:
+            dict: Sync status results
+        """
         # Check sync for each device in parallel using ThreadPoolExecutor
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import time

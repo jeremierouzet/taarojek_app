@@ -90,6 +90,61 @@ def disconnect_instance(request, instance_name):
 
 
 @login_required(login_url='/login/')
+def get_devices(request, instance_name):
+    """
+    Get list of all devices for an NSO instance
+    """
+    # Get instance configuration
+    instance = get_nso_instance(instance_name)
+    if not instance:
+        return JsonResponse({
+            'success': False,
+            'message': f'Unknown instance: {instance_name}'
+        })
+    
+    # Get the local port for this instance's tunnel
+    tunnel_info = tunnel_manager.active_tunnels.get(instance_name, {})
+    
+    # Check if using direct access (running on dev-vm)
+    if tunnel_info.get('direct'):
+        # Direct access - use the NSO instance's actual IP and port
+        nso_host = instance['ip']
+        nso_port = instance['port']
+    else:
+        # Tunnel mode - use localhost with local port
+        nso_host = 'localhost'
+        local_port = tunnel_manager.get_tunnel_port(instance_name)
+        if not local_port:
+            # Fallback to configured port if tunnel info not available
+            local_port = instance.get('local_port', 8888)
+        nso_port = local_port
+    
+    # Get NSO credentials from instance configuration
+    nso_user = instance.get('username')
+    nso_pass = instance.get('password')
+    use_https = instance.get('use_https', True)
+    
+    if not nso_user or not nso_pass:
+        return JsonResponse({
+            'success': False,
+            'message': 'NSO credentials not configured for this instance'
+        })
+    
+    # Use curl-based client
+    client = NSOClientCurl(
+        host=nso_host,
+        port=nso_port,
+        username=nso_user,
+        password=nso_pass,
+        use_https=use_https
+    )
+    
+    # Get all devices
+    result = client.get_all_devices()
+    return JsonResponse(result)
+
+
+@login_required(login_url='/login/')
 def check_sync(request, instance_name):
     """
     Check device sync status for an NSO instance
@@ -144,8 +199,21 @@ def check_sync(request, instance_name):
     if not conn_test.get('success'):
         return JsonResponse(conn_test)
     
-    # Check all devices sync
-    result = client.check_all_devices_sync()
+    # Check if specific devices are selected (from POST)
+    selected_devices = None
+    if request.method == 'POST':
+        import json
+        try:
+            data = json.loads(request.body)
+            selected_devices = data.get('devices', None)
+        except:
+            pass
+    
+    # Check devices sync (all or selected)
+    if selected_devices:
+        result = client.check_selected_devices_sync(selected_devices)
+    else:
+        result = client.check_all_devices_sync()
     
     # Transform result to match frontend expectations
     if result.get('success'):
