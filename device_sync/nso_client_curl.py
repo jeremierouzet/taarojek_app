@@ -246,12 +246,23 @@ class NSOClientCurl:
             return {'in_sync': False, 'error': data}
         
         # Parse sync status from response
-        # NSO check-sync returns: {"tailf-ncs:output":{"result":"in-sync"}} or "out-of-sync"
-        # Need to check for exact match of "in-sync", not just substring
+        # NSO check-sync returns: {"tailf-ncs:output":{"result":"in-sync"}} or "out-of-sync" or "locked"
+        # Possible statuses: "in-sync", "out-of-sync", "locked"
+        # Only "out-of-sync" should be treated as not in sync
         import re
-        # Look for "result": "in-sync" pattern
-        in_sync_match = re.search(r'"result":\s*"in-sync"', data)
-        in_sync = bool(in_sync_match)
+        # Look for "result": "<status>" pattern and extract the status
+        result_match = re.search(r'"result":\s*"([^"]+)"', data)
+        
+        if result_match:
+            status = result_match.group(1)
+            # Only "out-of-sync" means the device is actually out of sync
+            # "in-sync" = in sync
+            # "locked" = device is locked (treated as in-sync, not an error)
+            # Any other status = assume in sync unless explicitly out-of-sync
+            in_sync = (status != "out-of-sync")
+        else:
+            # If we can't parse the result, default to False (out of sync)
+            in_sync = False
         
         return {
             'in_sync': in_sync,
