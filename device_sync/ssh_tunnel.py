@@ -209,10 +209,11 @@ class SSHTunnelManager:
         if ssh_host == 'jump01':
             return self._create_tunnel_with_f_flag(cmd, instance_name, local_port, nso_ip, nso_port, ssh_host)
         else:
-            return self._create_tunnel_with_popen(cmd, instance_name, local_port, nso_ip, nso_port)
+            return self._create_tunnel_with_popen(cmd, instance_name, local_port, nso_ip, nso_port, ssh_host)
     
     def _create_tunnel_with_f_flag(self, cmd, instance_name, local_port, nso_ip, nso_port, ssh_host):
         """Create tunnel using SSH -f flag (for jump01 with ControlMaster)"""
+        self._current_ssh_host = ssh_host  # Store for use in _verify_and_finalize_tunnel
         try:
             # Execute the SSH command - using -f flag so SSH handles backgrounding
             logger.info("Starting SSH tunnel process with -f flag...")
@@ -326,8 +327,9 @@ class SSHTunnelManager:
                 'message': f'Error: {str(e)}'
             }
     
-    def _create_tunnel_with_popen(self, cmd, instance_name, local_port, nso_ip, nso_port):
+    def _create_tunnel_with_popen(self, cmd, instance_name, local_port, nso_ip, nso_port, ssh_host='devm'):
         """Create tunnel using Popen (for devm and other standard SSH hosts)"""
+        self._current_ssh_host = ssh_host  # Store for use in _verify_and_finalize_tunnel
         try:
             # Remove -f flag from command for Popen
             cmd_no_f = [arg for arg in cmd if arg != '-f']
@@ -406,7 +408,8 @@ class SSHTunnelManager:
             logger.info(f"Tunnel successfully established on port {local_port}")
             self.active_tunnels[instance_name] = {
                 'pid': pid, 
-                'local_port': local_port
+                'local_port': local_port,
+                'ssh_host': getattr(self, '_current_ssh_host', None)
             }
             
             return {
@@ -443,13 +446,41 @@ class SSHTunnelManager:
         pid = tunnel_info['pid']
         local_port = tunnel_info['local_port']
         
+        # Check if this tunnel uses a specific SSH host (stored during creation)
+        ssh_host = tunnel_info.get('ssh_host', None)
+        
         try:
-            # Kill the process
-            if pid > 0:
-                self._kill_process(pid)
+            # For jump01 with ControlMaster, we need to be more careful
+            # Don't kill the process as it might be sharing the ControlMaster
+            # Instead, just remove from tracking and let SSH handle cleanup
+            if ssh_host == 'jump01':
+                logger.info(
+                    f"Disconnecting jump01 tunnel for {instance_name} "
+                    f"(PID: {pid}, Port: {local_port})"
+                )
+                # For jump01, kill the specific tunnel process
+                # but don't use aggressive methods that might affect ControlMaster
+                if pid > 0:
+                    try:
+                        proc = psutil.Process(pid)
+                        proc.terminate()
+                        # Give it a moment to clean up
+                        try:
+                            proc.wait(timeout=3)
+                        except psutil.TimeoutExpired:
+                            # Process didn't terminate, but that's okay for ControlMaster tunnels
+                            logger.info(f"Tunnel process {pid} still running (may be ControlMaster child)")
+                    except psutil.NoSuchProcess:
+                        logger.info(f"Process {pid} already terminated")
+                    except Exception as e:
+                        logger.warning(f"Error terminating jump01 tunnel: {e}")
             else:
-                # PID not tracked, kill by port
-                self._kill_tunnel_on_port(local_port)
+                # For non-jump01 tunnels, use normal kill process
+                if pid > 0:
+                    self._kill_process(pid)
+                else:
+                    # PID not tracked, kill by port
+                    self._kill_tunnel_on_port(local_port)
             
             del self.active_tunnels[instance_name]
             logger.info(
