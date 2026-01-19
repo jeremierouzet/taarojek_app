@@ -16,4 +16,6 @@ urlpatterns = [
     path('sync/<str:instance_name>/', views.device_sync_view, name='sync_view'),
     path('api/get-devices/<str:instance_name>/', views.get_devices, name='get_devices'),
     path('api/check-sync/<str:instance_name>/', views.check_sync, name='check_sync'),
+    path('api/sync-from/<str:instance_name>/', views.sync_from, name='sync_from'),
+    path('api/sync-to/<str:instance_name>/', views.sync_to, name='sync_to'),
 ]

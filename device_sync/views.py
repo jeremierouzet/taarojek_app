@@ -242,6 +242,138 @@ def check_sync(request, instance_name):
 
 
 @login_required(login_url='/login/')
+def sync_from(request, instance_name):
+    """
+    Sync configuration FROM selected devices TO NSO
+    """
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'POST request required'})
+    
+    # Get instance configuration
+    instance = get_nso_instance(instance_name)
+    if not instance:
+        return JsonResponse({
+            'success': False,
+            'message': f'Unknown instance: {instance_name}'
+        })
+    
+    # Get the local port for this instance's tunnel
+    tunnel_info = tunnel_manager.active_tunnels.get(instance_name, {})
+    
+    # Check if using direct access (running on dev-vm)
+    if tunnel_info.get('direct'):
+        nso_host = instance['ip']
+        nso_port = instance['port']
+    else:
+        nso_host = 'localhost'
+        local_port = tunnel_manager.get_tunnel_port(instance_name)
+        if not local_port:
+            local_port = instance.get('local_port', 8888)
+        nso_port = local_port
+    
+    # Get NSO credentials
+    nso_user = instance.get('username')
+    nso_pass = instance.get('password')
+    use_https = instance.get('use_https', True)
+    
+    if not nso_user or not nso_pass:
+        return JsonResponse({
+            'success': False,
+            'message': 'NSO credentials not configured for this instance'
+        })
+    
+    # Create NSO client
+    client = NSOClientCurl(
+        host=nso_host,
+        port=nso_port,
+        username=nso_user,
+        password=nso_pass,
+        use_https=use_https
+    )
+    
+    # Get selected devices from POST data
+    import json
+    try:
+        data = json.loads(request.body)
+        selected_devices = data.get('devices', [])
+    except:
+        return JsonResponse({'success': False, 'message': 'Invalid request data'})
+    
+    if not selected_devices:
+        return JsonResponse({'success': False, 'message': 'No devices selected'})
+    
+    # Perform sync-from operation
+    result = client.sync_selected_devices_from(selected_devices)
+    return JsonResponse(result)
+
+
+@login_required(login_url='/login/')
+def sync_to(request, instance_name):
+    """
+    Sync configuration TO selected devices FROM NSO
+    """
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'POST request required'})
+    
+    # Get instance configuration
+    instance = get_nso_instance(instance_name)
+    if not instance:
+        return JsonResponse({
+            'success': False,
+            'message': f'Unknown instance: {instance_name}'
+        })
+    
+    # Get the local port for this instance's tunnel
+    tunnel_info = tunnel_manager.active_tunnels.get(instance_name, {})
+    
+    # Check if using direct access (running on dev-vm)
+    if tunnel_info.get('direct'):
+        nso_host = instance['ip']
+        nso_port = instance['port']
+    else:
+        nso_host = 'localhost'
+        local_port = tunnel_manager.get_tunnel_port(instance_name)
+        if not local_port:
+            local_port = instance.get('local_port', 8888)
+        nso_port = local_port
+    
+    # Get NSO credentials
+    nso_user = instance.get('username')
+    nso_pass = instance.get('password')
+    use_https = instance.get('use_https', True)
+    
+    if not nso_user or not nso_pass:
+        return JsonResponse({
+            'success': False,
+            'message': 'NSO credentials not configured for this instance'
+        })
+    
+    # Create NSO client
+    client = NSOClientCurl(
+        host=nso_host,
+        port=nso_port,
+        username=nso_user,
+        password=nso_pass,
+        use_https=use_https
+    )
+    
+    # Get selected devices from POST data
+    import json
+    try:
+        data = json.loads(request.body)
+        selected_devices = data.get('devices', [])
+    except:
+        return JsonResponse({'success': False, 'message': 'Invalid request data'})
+    
+    if not selected_devices:
+        return JsonResponse({'success': False, 'message': 'No devices selected'})
+    
+    # Perform sync-to operation
+    result = client.sync_selected_devices_to(selected_devices)
+    return JsonResponse(result)
+
+
+@login_required(login_url='/login/')
 def device_sync_view(request, instance_name):
     """
     Device sync status page

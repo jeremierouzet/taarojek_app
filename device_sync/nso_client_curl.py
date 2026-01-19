@@ -272,6 +272,88 @@ class NSOClientCurl:
             'raw_response': data[:200]
         }
     
+    def sync_device_from(self, device_name):
+        """
+        Sync configuration FROM device TO NSO (sync-from operation).
+        This updates NSO's view of the device configuration.
+        
+        Args:
+            device_name (str): Device name
+            
+        Returns:
+            dict: Sync operation result
+        """
+        # Use NSO operational endpoint with POST
+        endpoint = f'/restconf/operations/tailf-ncs:devices/device={device_name}/sync-from'
+        post_data = '{}'  # Empty JSON object for the operation
+        
+        success, data = self._curl_request(endpoint, method='POST', data=post_data, timeout=30)
+        
+        if not success:
+            logger.error(f"Sync-from failed for {device_name}: {data}")
+            return {'success': False, 'error': data, 'device': device_name}
+        
+        # Parse response - NSO returns {"tailf-ncs:output":{"result":true}} on success
+        import re
+        result_match = re.search(r'"result":\s*(true|false)', data)
+        
+        if result_match:
+            result = result_match.group(1) == 'true'
+            logger.info(f"Sync-from {device_name}: success={result}")
+            return {
+                'success': result,
+                'device': device_name,
+                'message': 'Device synced from successfully' if result else 'Sync-from failed'
+            }
+        else:
+            logger.warning(f"Could not parse sync-from result for {device_name}, response: {data[:500]}")
+            return {
+                'success': False,
+                'device': device_name,
+                'error': 'Could not parse response'
+            }
+    
+    def sync_device_to(self, device_name):
+        """
+        Sync configuration TO device FROM NSO (sync-to operation).
+        This pushes NSO's configuration to the device.
+        
+        Args:
+            device_name (str): Device name
+            
+        Returns:
+            dict: Sync operation result
+        """
+        # Use NSO operational endpoint with POST
+        endpoint = f'/restconf/operations/tailf-ncs:devices/device={device_name}/sync-to'
+        post_data = '{}'  # Empty JSON object for the operation
+        
+        success, data = self._curl_request(endpoint, method='POST', data=post_data, timeout=30)
+        
+        if not success:
+            logger.error(f"Sync-to failed for {device_name}: {data}")
+            return {'success': False, 'error': data, 'device': device_name}
+        
+        # Parse response - NSO returns {"tailf-ncs:output":{"result":true}} on success
+        import re
+        result_match = re.search(r'"result":\s*(true|false)', data)
+        
+        if result_match:
+            result = result_match.group(1) == 'true'
+            logger.info(f"Sync-to {device_name}: success={result}")
+            return {
+                'success': result,
+                'device': device_name,
+                'message': 'Device synced to successfully' if result else 'Sync-to failed'
+            }
+        else:
+            logger.warning(f"Could not parse sync-to result for {device_name}, response: {data[:500]}")
+            return {
+                'success': False,
+                'device': device_name,
+                'error': 'Could not parse response'
+            }
+    
     def check_all_devices_sync(self):
         """
         Check sync status for all devices.
@@ -379,4 +461,106 @@ class NSOClientCurl:
                 'out_of_sync': out_of_sync_count
             },
             'devices': device_status
+        }
+    
+    def sync_selected_devices_from(self, device_names):
+        """
+        Sync configuration FROM selected devices TO NSO.
+        
+        Args:
+            device_names (list): List of device names to sync from
+            
+        Returns:
+            dict: Sync operation results
+        """
+        if not device_names:
+            return {
+                'success': False,
+                'message': 'No devices selected',
+                'results': []
+            }
+        
+        return self._sync_devices(device_names, 'from')
+    
+    def sync_selected_devices_to(self, device_names):
+        """
+        Sync configuration TO selected devices FROM NSO.
+        
+        Args:
+            device_names (list): List of device names to sync to
+            
+        Returns:
+            dict: Sync operation results
+        """
+        if not device_names:
+            return {
+                'success': False,
+                'message': 'No devices selected',
+                'results': []
+            }
+        
+        return self._sync_devices(device_names, 'to')
+    
+    def _sync_devices(self, device_names, direction):
+        """
+        Internal method to sync devices in a specific direction.
+        
+        Args:
+            device_names (list): List of device names
+            direction (str): 'from' or 'to'
+            
+        Returns:
+            dict: Sync operation results
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
+        
+        start_time = time.time()
+        results = []
+        success_count = 0
+        failure_count = 0
+        
+        def sync_device(device_name):
+            """Helper function to sync a single device"""
+            if direction == 'from':
+                return self.sync_device_from(device_name)
+            else:
+                return self.sync_device_to(device_name)
+        
+        # Use ThreadPoolExecutor with 5 concurrent workers (sync operations take longer)
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Submit all tasks
+            future_to_device = {executor.submit(sync_device, name): name for name in device_names}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_device):
+                try:
+                    result = future.result()
+                    results.append(result)
+                    if result.get('success'):
+                        success_count += 1
+                    else:
+                        failure_count += 1
+                except Exception as e:
+                    device_name = future_to_device[future]
+                    logger.error(f"Error syncing device {device_name}: {e}")
+                    results.append({
+                        'success': False,
+                        'device': device_name,
+                        'error': str(e)
+                    })
+                    failure_count += 1
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Synced {len(device_names)} devices {direction} in {elapsed:.1f} seconds")
+        
+        return {
+            'success': True,
+            'message': f'Sync-{direction} completed: {success_count} successful, {failure_count} failed',
+            'stats': {
+                'total': len(device_names),
+                'successful': success_count,
+                'failed': failure_count
+            },
+            'results': results
         }

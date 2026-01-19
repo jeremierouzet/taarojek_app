@@ -205,9 +205,15 @@
     
     <div id="error-message" class="alert alert-error" style="display: none;"></div>
     
-    <div style="margin-top: 2rem;">
+    <div style="margin-top: 2rem; display: flex; gap: 1rem; flex-wrap: wrap;">
         <button class="btn btn-primary" onclick="checkSync()" id="check-sync-btn">
             🔄 Check Sync Status
+        </button>
+        <button class="btn btn-secondary" onclick="syncFrom()" id="sync-from-btn" style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);">
+            ⬇️ Sync From Devices
+        </button>
+        <button class="btn btn-secondary" onclick="syncTo()" id="sync-to-btn" style="background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);">
+            ⬆️ Sync To Devices
         </button>
     </div>
     {% endif %}
@@ -291,14 +297,23 @@ function updateSelectedCount() {
     const count = checkboxes.length;
     document.getElementById('selected-count').textContent = `${count} selected`;
     
-    // Update button text
-    const btn = document.getElementById('check-sync-btn');
+    // Update button texts
+    const checkBtn = document.getElementById('check-sync-btn');
+    const syncFromBtn = document.getElementById('sync-from-btn');
+    const syncToBtn = document.getElementById('sync-to-btn');
+    
     if (count === 0) {
-        btn.textContent = '🔄 Check All Devices';
+        checkBtn.textContent = '🔄 Check All Devices';
+        syncFromBtn.textContent = '⬇️ Sync From All Devices';
+        syncToBtn.textContent = '⬆️ Sync To All Devices';
     } else if (count === allDevices.length) {
-        btn.textContent = `🔄 Check All ${count} Devices`;
+        checkBtn.textContent = `🔄 Check All ${count} Devices`;
+        syncFromBtn.textContent = `⬇️ Sync From All ${count} Devices`;
+        syncToBtn.textContent = `⬆️ Sync To All ${count} Devices`;
     } else {
-        btn.textContent = `🔄 Check ${count} Selected Device${count > 1 ? 's' : ''}`;
+        checkBtn.textContent = `🔄 Check ${count} Selected Device${count > 1 ? 's' : ''}`;
+        syncFromBtn.textContent = `⬇️ Sync From ${count} Device${count > 1 ? 's' : ''}`;
+        syncToBtn.textContent = `⬆️ Sync To ${count} Device${count > 1 ? 's' : ''}`;
     }
 }
 
@@ -371,6 +386,126 @@ function checkSync() {
         .catch(err => {
             loading.style.display = 'none';
             error.textContent = '✗ Failed to check sync status: ' + err;
+            error.style.display = 'block';
+        });
+}
+
+function syncFrom() {
+    const selectedDevices = getSelectedDevices();
+    
+    if (selectedDevices.length === 0 && allDevices.length > 10) {
+        if (!confirm(`This will sync FROM all ${allDevices.length} devices. This may take some time. Continue?`)) {
+            return;
+        }
+    } else if (selectedDevices.length > 0) {
+        if (!confirm(`This will sync FROM ${selectedDevices.length} device(s). Continue?`)) {
+            return;
+        }
+    }
+    
+    performSync('from', selectedDevices);
+}
+
+function syncTo() {
+    const selectedDevices = getSelectedDevices();
+    
+    if (selectedDevices.length === 0 && allDevices.length > 10) {
+        if (!confirm(`⚠️ WARNING: This will sync TO all ${allDevices.length} devices, overwriting their configurations. Continue?`)) {
+            return;
+        }
+    } else if (selectedDevices.length > 0) {
+        if (!confirm(`⚠️ WARNING: This will sync TO ${selectedDevices.length} device(s), overwriting their configurations. Continue?`)) {
+            return;
+        }
+    }
+    
+    performSync('to', selectedDevices);
+}
+
+function performSync(direction, selectedDevices) {
+    const loading = document.getElementById('loading-indicator');
+    const error = document.getElementById('error-message');
+    const results = document.getElementById('sync-results');
+    
+    // Update loading message
+    const actionText = direction === 'from' ? 'Syncing FROM devices TO NSO' : 'Syncing TO devices FROM NSO';
+    loading.innerHTML = `<span class="loading"></span> ${actionText}... This may take a while.`;
+    loading.style.display = 'block';
+    error.style.display = 'none';
+    results.style.display = 'none';
+    
+    // Prepare request
+    const endpoint = direction === 'from' ? '/api/sync-from/{{ instance_name }}/' : '/api/sync-to/{{ instance_name }}/';
+    const requestOptions = {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            devices: selectedDevices.length > 0 ? selectedDevices : allDevices.map(d => d.name)
+        })
+    };
+    
+    fetch(endpoint, requestOptions)
+        .then(response => response.json())
+        .then(data => {
+            loading.style.display = 'none';
+            
+            if (data.success) {
+                // Show results in a table format
+                const stats = data.stats;
+                const directionText = direction === 'from' ? 'FROM devices' : 'TO devices';
+                
+                // Update stats
+                document.getElementById('total-devices').textContent = stats.total;
+                document.getElementById('in-sync-count').textContent = stats.successful;
+                document.getElementById('out-sync-count').textContent = stats.failed;
+                
+                // Update stat labels
+                document.querySelector('#in-sync-count').parentElement.querySelector('.stat-label').textContent = 'Successful';
+                document.querySelector('#out-sync-count').parentElement.querySelector('.stat-label').textContent = 'Failed';
+                
+                // Update table header
+                document.querySelector('.card-header h2').textContent = `Sync ${direction.toUpperCase()} Results`;
+                
+                // Update table
+                const tbody = document.getElementById('device-table-body');
+                tbody.innerHTML = '';
+                
+                data.results.forEach(result => {
+                    const row = document.createElement('tr');
+                    const statusClass = result.success ? 'status-in-sync' : 'status-out-sync';
+                    const statusText = result.success ? '✓ Success' : '✗ Failed';
+                    const message = result.message || result.error || 'N/A';
+                    
+                    row.innerHTML = `
+                        <td><strong>${result.device}</strong></td>
+                        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                        <td>${message}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+                
+                results.style.display = 'block';
+                
+                // Show success message
+                const successMsg = document.createElement('div');
+                successMsg.className = 'alert alert-info';
+                successMsg.textContent = `✓ ${data.message}`;
+                successMsg.style.marginTop = '1rem';
+                results.insertBefore(successMsg, results.firstChild);
+                
+                // Auto-remove success message after 5 seconds
+                setTimeout(() => successMsg.remove(), 5000);
+            } else {
+                error.textContent = '✗ ' + data.message;
+                error.style.display = 'block';
+            }
+        })
+        .catch(err => {
+            loading.style.display = 'none';
+            error.textContent = '✗ Sync operation failed: ' + err;
             error.style.display = 'block';
         });
 }
