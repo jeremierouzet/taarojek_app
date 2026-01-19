@@ -24,6 +24,9 @@ Django web application for managing NSO instances and checking device synchroniz
   - **Cross-Platform**: Works on Windows, macOS, and Linux
 - **Direct Access Mode**: Detects when running on dev-vm and connects directly to NSO without tunnels
 - **Device Sync Checking**: Check if all devices are synchronized with NSO using RESTCONF API
+  - **Selective Checking**: Choose specific devices or check all devices
+  - **Device Selection UI**: Interactive checkboxes to select one or more devices
+  - **Parallel Processing**: Checks multiple devices simultaneously for faster results
 - **Robust NSO Client**: Curl-based client handles NSO connection behavior and SSL/TLS issues
 - **Swisscom Branding**: Custom UI with Swisscom corporate design
 - **Authentication**: Secure login system with username/password
@@ -381,8 +384,10 @@ sudo systemctl start nso-manager
 
 4. **Check Device Sync:**
    - Click "Check Devices" on any connected instance
-   - View sync statistics and detailed device status
-   - Refresh as needed
+   - **Select devices**: Choose specific devices from the checkbox list or select all
+   - **Check sync status**: Click "Check Sync Status" button
+   - View sync statistics and detailed device status table
+   - Refresh as needed with different device selections
 
 5. **Disconnect:**
    - Click "Disconnect" to close SSH tunnels
@@ -494,6 +499,10 @@ taarojek_app/
 - Bypasses Python requests SSL/TLS issues
 - Accepts curl rc=28 (NSO connection behavior)
 - Supports GET and POST operations
+- **Device sync methods**:
+  - `check_all_devices_sync()`: Check all devices in NSO
+  - `check_selected_devices_sync(device_names)`: Check specific devices only
+  - Parallel processing with ThreadPoolExecutor (10 workers)
 - Used for device sync checks
 
 **Curl Wrapper** (`device_sync/nso_curl.sh`)
@@ -961,6 +970,28 @@ To extend functionality:
 - **Credential Display**: `setup.sh` no longer echoes credentials to terminal for security
 
 ## Recent Updates
+
+### Version 2.3 - Device Selection for Check-Sync (2026-01-19)
+
+**Enhanced Device Sync Checking:**
+- **Selective device checking**: Choose specific devices to check instead of always checking all devices
+- **Interactive UI**: Device selection panel with checkboxes for each device
+- **Bulk operations**: Select All / Deselect All buttons for convenience
+- **Dynamic feedback**: Button text updates based on selection (e.g., "Check 5 Selected Devices")
+- **Selection counter**: Real-time display of how many devices are selected
+- **Flexible workflow**: Check 1 device, multiple devices, or all devices
+
+**API Enhancements:**
+- New `get_devices` endpoint to fetch device list from NSO
+- Updated `check_sync` endpoint accepts POST requests with device selection
+- New `check_selected_devices_sync()` method in NSOClientCurl
+- Refactored internal `_check_devices_sync()` method for code reuse
+
+**User Experience:**
+- Devices load automatically when opening sync status page
+- Checkbox grid layout adapts to screen size
+- Clean, intuitive interface matching Swisscom design
+- Maintains parallel processing performance for selected devices
 
 ### Version 2.2 - SSH Tunnel Enhancements (2025-01-15)
 
