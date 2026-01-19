@@ -106,10 +106,6 @@ else
     echo "  ./run.sh"
 fi
 echo ""
-echo "Login credentials:"
-echo "  Username: taarojek"
-echo "  Password: Sheyratan.0150n!"
-echo ""
 echo "Access at: http://localhost:50478"
 echo ""
 if [ "$OS_NAME" = "Windows" ]; then

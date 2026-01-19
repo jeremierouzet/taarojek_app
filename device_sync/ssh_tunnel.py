@@ -5,6 +5,7 @@ This module handles creating and managing SSH tunnels to NSO instances.
 Cross-platform support for Windows, macOS, and Linux.
 """
 
+import os
 import subprocess
 import time
 import logging
@@ -129,53 +130,245 @@ class SSHTunnelManager:
         killed = self._kill_tunnel_on_port(local_port)
         if killed:
             logger.info(f"Killed {killed} existing process(es) on port {local_port}")
-            time.sleep(1)  # Give OS time to release the port
+            time.sleep(2)  # Give OS time to release the port
+        
+        # Double-check the port is actually free
+        if self._is_port_in_use(local_port):
+            logger.warning(f"Port {local_port} still in use after cleanup, attempting force close...")
+            # Try one more aggressive cleanup
+            import socket
+            try:
+                # Try to bind to ensure it's really free
+                test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                test_sock.bind(('localhost', local_port))
+                test_sock.close()
+                time.sleep(1)
+            except OSError:
+                # Still in use, try killing by port one more time
+                self._kill_tunnel_on_port(local_port)
+                time.sleep(2)
         
         # Create the SSH tunnel command
         tunnel_spec = f"{local_port}:{nso_ip}:{nso_port}"
         
         # Platform-specific SSH command
-        # Note: Removed -f flag, using Popen to background process instead
-        # Special handling for jump01: uses port 443 instead of 22
+        # For jump01: uses port 443 and relies on ControlMaster
+        # Use -f flag to let SSH handle backgrounding properly
         if ssh_host == 'jump01':
             ssh_port = '443'
+            # For jump01, let SSH config handle ControlMaster
+            # Use -f to background after authentication (works with ControlMaster)
+            ssh_cmd_base = ['ssh', '-f', '-p', ssh_port,
+                           '-o', 'StrictHostKeyChecking=no', 
+                           '-o', 'ServerAliveInterval=60',
+                           '-o', 'ConnectTimeout=10',  # Limit connection attempt time
+                           '-o', 'ExitOnForwardFailure=yes']  # Exit if port forwarding fails
         else:
             ssh_port = '22'
+            ssh_cmd_base = ['ssh', '-f', '-p', ssh_port,
+                           '-o', 'StrictHostKeyChecking=no',
+                           '-o', 'ServerAliveInterval=60',
+                           '-o', 'ConnectTimeout=10',  # Limit connection attempt time
+                           '-o', 'ExitOnForwardFailure=yes']
         
         if self.os_type == 'Windows':
             # Windows: use ssh.exe (available in Windows 10+)
-            cmd = ['ssh', '-p', ssh_port, '-o', 'StrictHostKeyChecking=no', 
-                   '-o', 'ServerAliveInterval=60',
-                   '-L', tunnel_spec, '-N', ssh_host]
+            cmd = ssh_cmd_base + ['-L', tunnel_spec, '-N', ssh_host]
         else:
             # Unix-like (macOS, Linux)
-            cmd = ['ssh', '-p', ssh_port, '-o', 'StrictHostKeyChecking=no',
-                   '-o', 'ServerAliveInterval=60', 
-                   '-L', tunnel_spec, '-N', ssh_host]
+            cmd = ssh_cmd_base + ['-L', tunnel_spec, '-N', ssh_host]
         
         logger.info(f"Creating SSH tunnel: {' '.join(cmd)}")
         
+        # For jump01, verify ControlMaster is available first
+        if ssh_host == 'jump01':
+            test_cmd = ['ssh', '-O', 'check', ssh_host]
+            try:
+                test_result = subprocess.run(
+                    test_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+                if test_result.returncode != 0:
+                    logger.warning(f"ControlMaster check failed: {test_result.stderr}")
+                    return {
+                        'success': False,
+                        'message': (
+                            'No active SSH ControlMaster connection to jump01. '
+                            'Please connect first: ssh jump01'
+                        )
+                    }
+                else:
+                    logger.info("ControlMaster connection verified")
+            except Exception as e:
+                logger.warning(f"ControlMaster check error: {e}")
+        
+        # Use different methods for jump01 (with -f) vs others (with Popen)
+        if ssh_host == 'jump01':
+            return self._create_tunnel_with_f_flag(cmd, instance_name, local_port, nso_ip, nso_port, ssh_host)
+        else:
+            return self._create_tunnel_with_popen(cmd, instance_name, local_port, nso_ip, nso_port)
+    
+    def _create_tunnel_with_f_flag(self, cmd, instance_name, local_port, nso_ip, nso_port, ssh_host):
+        """Create tunnel using SSH -f flag (for jump01 with ControlMaster)"""
         try:
-            # Execute the SSH command in background using Popen
-            logger.info("Starting SSH tunnel process in background...")
-            process = subprocess.Popen(
+            # Execute the SSH command - using -f flag so SSH handles backgrounding
+            logger.info("Starting SSH tunnel process with -f flag...")
+            # Set TERM environment variable to prevent tput errors from shell rc files
+            env = os.environ.copy()
+            env['TERM'] = 'dumb'
+            
+            # Use run() with -f flag which backgrounds after establishing connection
+            timeout_duration = 15
+            
+            result = subprocess.run(
                 cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=timeout_duration
+            )
+            
+            if result.returncode != 0:
+                # SSH failed to start
+                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                # Filter out tput warnings
+                error_lines = [line for line in error_msg.split('\n') 
+                              if line and not line.startswith('tput:')]
+                filtered_error = '\n'.join(error_lines).strip()
+                
+                if filtered_error:
+                    logger.error(f"SSH command failed: {filtered_error}")
+                    
+                    if 'Permission denied' in filtered_error:
+                        return {
+                            'success': False,
+                            'message': (
+                                'SSH authentication failed for jump01 (requires 2FA). '
+                                'Please establish an SSH connection first: ssh jump01'
+                            )
+                        }
+                    
+                    return {
+                        'success': False,
+                        'message': f'SSH tunnel failed: {filtered_error[:200]}'
+                    }
+                else:
+                    # Only tput errors, might still work
+                    logger.warning("SSH returned non-zero but only tput warnings")
+            
+            logger.info(f"SSH tunnel command completed, finding PID...")
+            
+            # Find the SSH process PID (since -f backgrounds it)
+            # Give it a moment to show up in process list
+            time.sleep(2)
+            
+            # Try multiple methods to find the PID
+            pid = None
+            for attempt in range(5):
+                pid = self._find_tunnel_pid(local_port, nso_ip, nso_port)
+                if pid:
+                    logger.info(f"Found tunnel by command line match (PID: {pid})")
+                    break
+                
+                # Fallback: find by port
+                pid = self._find_tunnel_pid_by_port(local_port)
+                if pid:
+                    logger.info(f"Found tunnel by port (PID: {pid})")
+                    break
+                
+                # Wait and retry
+                if attempt < 4:
+                    logger.debug(f"PID not found yet, retrying... (attempt {attempt + 1}/5)")
+                    time.sleep(1)
+            
+            if not pid or pid <= 0:
+                # Last attempt: use lsof to find process on port
+                try:
+                    result = subprocess.run(
+                        ['lsof', '-ti', f':{local_port}'],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        pid = int(result.stdout.strip().split('\n')[0])
+                        logger.info(f"Found tunnel via lsof (PID: {pid})")
+                except Exception as e:
+                    logger.warning(f"lsof fallback failed: {e}")
+            
+            if not pid or pid <= 0:
+                logger.warning("Could not find SSH tunnel process, but may still work")
+                # Don't fail here - the tunnel might still be working
+                # Just use a dummy PID and rely on port checking
+                pid = -1
+            
+            logger.info(f"Found SSH tunnel with PID: {pid}")
+            
+            # Verify port is in use
+            return self._verify_and_finalize_tunnel(instance_name, local_port, pid)
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"SSH command timed out")
+            return {
+                'success': False,
+                'message': (
+                    f'SSH connection to {ssh_host} timed out. '
+                    f'Please verify network connectivity and that {ssh_host} is reachable.'
+                )
+            }
+        except Exception as e:
+            logger.exception(f"Error creating tunnel: {e}")
+            return {
+                'success': False,
+                'message': f'Error: {str(e)}'
+            }
+    
+    def _create_tunnel_with_popen(self, cmd, instance_name, local_port, nso_ip, nso_port):
+        """Create tunnel using Popen (for devm and other standard SSH hosts)"""
+        try:
+            # Remove -f flag from command for Popen
+            cmd_no_f = [arg for arg in cmd if arg != '-f']
+            
+            logger.info("Starting SSH tunnel with Popen...")
+            env = os.environ.copy()
+            env['TERM'] = 'dumb'
+            
+            process = subprocess.Popen(
+                cmd_no_f,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
-                start_new_session=True  # Detach from parent process
+                start_new_session=True,
+                env=env
             )
             
             pid = process.pid
             logger.info(f"SSH process started with PID: {pid}")
             
-            # Give the tunnel time to establish - retry multiple times
+            # Verify port is in use
+            return self._verify_and_finalize_tunnel(instance_name, local_port, pid)
+            
+        except Exception as e:
+            logger.exception(f"Error creating tunnel: {e}")
+            return {
+                'success': False,
+                'message': f'Error: {str(e)}'
+            }
+    
+    def _verify_and_finalize_tunnel(self, instance_name, local_port, pid):
+        """Verify tunnel is working and finalize setup"""
+        try:
+            # Give the tunnel time to establish and verify
             logger.info("Waiting for tunnel to establish...")
-            max_attempts = 10
+            max_attempts = 15
             port_ready = False
             
+            time.sleep(2)  # Initial delay
+            
             for attempt in range(max_attempts):
-                time.sleep(1)
                 if self._is_port_in_use(local_port):
                     port_ready = True
                     logger.info(
@@ -187,19 +380,20 @@ class SSHTunnelManager:
                     f"Attempt {attempt + 1}/{max_attempts}: "
                     f"Port {local_port} not ready yet..."
                 )
+                time.sleep(1)
             
             # Verify the tunnel is working by checking if port is in use
             if not port_ready:
                 logger.error(
-                    f"Port {local_port} not in use after {max_attempts} seconds"
+                    f"Port {local_port} not in use after {max_attempts + 2} seconds"
                 )
-                # Kill the process if it's still running
-                try:
-                    if process.poll() is None:  # Process still running
-                        process.terminate()
+                # Kill the process if we found it
+                if pid > 0:
+                    try:
+                        self._kill_process(pid)
                         logger.info(f"Terminated SSH process {pid}")
-                except Exception as e:
-                    logger.warning(f"Error terminating process: {e}")
+                    except Exception as e:
+                        logger.warning(f"Error terminating process: {e}")
                 
                 return {
                     'success': False,
@@ -222,9 +416,8 @@ class SSHTunnelManager:
                 'local_port': local_port,
                 'url': f'https://localhost:{local_port}'
             }
-                
         except Exception as e:
-            logger.exception(f"Error creating tunnel: {e}")
+            logger.exception(f"Error verifying tunnel: {e}")
             return {
                 'success': False,
                 'message': f'Error: {str(e)}'
@@ -287,12 +480,17 @@ class SSHTunnelManager:
         # Clean up stale entries
         stale = []
         for instance, tunnel_info in self.active_tunnels.items():
-            if not self._is_process_running(tunnel_info['pid']):
+            pid = tunnel_info['pid']
+            is_running = self._is_process_running(pid)
+            logger.debug(f"Checking tunnel {instance}: PID={pid}, running={is_running}")
+            if not is_running:
                 stale.append(instance)
         
         for instance in stale:
+            logger.info(f"Removing stale tunnel: {instance}")
             del self.active_tunnels[instance]
         
+        logger.debug(f"Active tunnels: {list(self.active_tunnels.keys())}")
         return self.active_tunnels.copy()
     
     def get_tunnel_port(self, instance_name):
@@ -355,12 +553,36 @@ class SSHTunnelManager:
             return False
         
         try:
-            return psutil.pid_exists(pid) and psutil.Process(pid).is_running()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            # First check if PID exists (lightweight check)
+            if not psutil.pid_exists(pid):
+                return False
+            
+            # Try to get process info
+            proc = psutil.Process(pid)
+            return proc.is_running()
+        except psutil.NoSuchProcess:
             return False
+        except psutil.AccessDenied:
+            # On macOS, we might not have permission to inspect the process
+            # But if pid_exists returned True, the process is likely running
+            # Do a secondary check using ps command
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ['ps', '-p', str(pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=1
+                )
+                # ps returns 0 if process exists
+                return result.returncode == 0
+            except:
+                # Fallback: assume running if pid exists
+                return psutil.pid_exists(pid)
     
     def _is_port_in_use(self, port):
         """Check if a port is in use - Cross-platform"""
+        # Try psutil first (works on most platforms with proper permissions)
         try:
             connections = psutil.net_connections(kind='inet')
             for conn in connections:
@@ -371,30 +593,40 @@ class SSHTunnelManager:
                     continue
             return False
         except psutil.AccessDenied:
-            # Fallback: try to bind to the port
-            logger.warning(
-                f"Access denied checking connections, "
-                f"using socket bind test for port {port}"
-            )
-            import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                sock.bind(('localhost', port))
-                sock.close()
-                return False  # Port is free (we could bind)
-            except OSError:
-                return True  # Port in use (bind failed)
+            # macOS often denies access, use socket fallback
+            pass
         except Exception as e:
-            logger.error(f"Error checking port {port}: {e}")
-            # Fallback method using socket
-            import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
-                sock.bind(('localhost', port))
-                sock.close()
-                return False
-            except OSError:
+            logger.debug(f"psutil error checking port {port}: {e}")
+        
+        # Fallback: try to connect to the port (more reliable than bind test)
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(0.5)
+        try:
+            # Try to connect to the port
+            result = sock.connect_ex(('localhost', port))
+            sock.close()
+            # If connection succeeds or is refused, port is in use
+            # connect_ex returns 0 on success, errno on failure
+            if result == 0:
+                return True  # Connection successful, port in use
+            elif result == 61:  # Connection refused (macOS/Linux)
+                return True  # Service is listening but refused connection
+            elif result == 111:  # Connection refused (Linux)
                 return True
+            # For SSH tunnels, try bind test as secondary check
+            sock2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock2.settimeout(0.5)
+            try:
+                sock2.bind(('localhost', port))
+                sock2.close()
+                return False  # Could bind, port is free
+            except OSError:
+                return True  # Bind failed, port in use
+        except Exception as e:
+            logger.debug(f"Socket test error for port {port}: {e}")
+            # Final fallback: assume port might be in use if we can't test
+            return False
     
     def _kill_process(self, pid):
         """Kill a process - Cross-platform"""
@@ -442,6 +674,31 @@ class SSHTunnelManager:
                         
         except Exception as e:
             logger.debug(f"Error checking for processes on port {port}: {e}")
+        
+        # Fallback for macOS: use lsof to find process using the port
+        if killed_count == 0:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['lsof', '-ti', f':{port}'],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    pids = result.stdout.strip().split('\n')
+                    for pid_str in pids:
+                        try:
+                            pid = int(pid_str)
+                            proc = psutil.Process(pid)
+                            if 'ssh' in proc.name().lower():
+                                logger.info(f"Killing SSH tunnel on port {port} via lsof (PID: {pid})")
+                                self._kill_process(pid)
+                                killed_count += 1
+                        except (ValueError, psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
+            except Exception as e:
+                logger.debug(f"lsof fallback failed for port {port}: {e}")
         
         return killed_count
 

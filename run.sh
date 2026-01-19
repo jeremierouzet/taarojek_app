@@ -62,6 +62,38 @@ else
     echo "✓ NSO credentials loaded from environment"
 fi
 
+# Check if jump01 connection is needed (for production access)
+# Check if ControlMaster connection exists
+CONTROL_PATH=$(ssh -G jump01 2>/dev/null | grep "^controlpath " | awk '{print $2}')
+CONTROL_PATH_EXPANDED=$(eval echo $CONTROL_PATH)
+
+if [ -n "$CONTROL_PATH_EXPANDED" ] && [ -S "$CONTROL_PATH_EXPANDED" ]; then
+    echo "✓ Jump01 ControlMaster connection already active"
+else
+    echo ""
+    echo "Jump01 connection not found (required for production access)"
+    read -p "Do you want to establish jump01 connection now? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "Connecting to jump01... (you will be prompted for 2FA)"
+        echo "After authentication, press Ctrl+C to continue (connection will persist)"
+        echo ""
+        # Use ControlMaster to create persistent connection
+        ssh -fN jump01 2>/dev/null || {
+            echo "⚠️  Jump01 connection failed or was cancelled"
+            echo "You can connect later by running: ssh jump01"
+        }
+        # Give it a moment to establish
+        sleep 1
+        # Check if it worked
+        if [ -S "$CONTROL_PATH_EXPANDED" ]; then
+            echo "✓ Jump01 ControlMaster connection established"
+        fi
+    else
+        echo "Skipping jump01 connection. You can connect later with: ssh jump01"
+    fi
+fi
+
 echo "Starting Swisscom NSO Manager on port 50478..."
 echo "Access at: http://localhost:50478"
 echo ""
